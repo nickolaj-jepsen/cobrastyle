@@ -1,0 +1,19 @@
+[project]
+name = "cobrastyle-jinja2"
+version = "0.0.0.dev1"
+description = "CSS modules for Jinja2"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "cobrastyle-core",
+    "jinja2>=3",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+dev-dependencies = [
+    "pytest>=8.3.2",
+]

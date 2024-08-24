@@ -1,0 +1,13 @@
+[project]
+name = "cobrastyle-core"
+version = "0.0.0.dev1"
+description = "Core functionality for CobraStyle"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "cobrastyle-lightningcss",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

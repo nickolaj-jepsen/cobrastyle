@@ -1,0 +1,11 @@
+# Editor
+.idea/
+
+# Python
+.venv/
+__pycache__/
+packages/*/dist/
+.pytest_cache/
+
+# Rust
+packages/*/target/

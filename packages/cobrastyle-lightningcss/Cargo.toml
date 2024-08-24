@@ -1,0 +1,13 @@
+[package]
+name = "cobrastyle-lightningcss"
+version = "0.0.0"
+edition = "2021"
+
+[lib]
+name = "cobrastyle_lightningcss"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.22.2", features = ["abi3-py310"] }
+browserslist-rs = "0.16.0"
+lightningcss = { version = "1.0.0-alpha.58", features = ["browserslist"] }

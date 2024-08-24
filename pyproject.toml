@@ -1,0 +1,29 @@
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.uv]
+dev-dependencies = [
+    "ruff==0.6.2",
+]
+
+[tool.uv.sources]
+cobrastyle-lightningcss = { workspace = true }
+cobrastyle-jinja2 = { workspace = true }
+cobrastyle-core = { workspace = true }
+
+[tool.ruff]
+line-length = 120
+src = ["src"]
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E", # pycodestyle
+    "F", # Pyflakes
+    "UP", # pyupgrade
+    "B", # flake8-bugbear
+    "SIM", # flake8-simplify
+    "I", # isort
+    "PT", # flake8-pytest-style
+]
+
