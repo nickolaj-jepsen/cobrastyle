@@ -1,0 +1,20 @@
+[project]
+name = "cobrastyle-django"
+version = "0.0.0.dev1"
+description = "Django intergation for Cobrastyle"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "cobrastyle-core",
+    "django>=4",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+dev-dependencies = [
+    "pytest-django>=4.9.0",
+    "pytest>=8.3.2",
+]
