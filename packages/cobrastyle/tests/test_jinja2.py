@@ -8,7 +8,6 @@ from cobrastyle.jinja2 import CobrastyleExtension, configure
 
 
 def _clean(template: str) -> str:
-    # dedent + remove empty lines
     return "\n".join(line for line in dedent(template).splitlines() if line.strip()).strip()
 
 
@@ -279,6 +278,18 @@ def test_dynamic_path_is_rejected():
     jinja = make_environment({"test.css": ".a {}"})
     with pytest.raises(TemplateSyntaxError, match="constant string"):
         jinja.from_string('{% cobrastyle styles = "test" + ".css" %}')
+
+
+def test_bytecode_cache_rejected(tmp_path):
+    from jinja2.bccache import FileSystemBytecodeCache
+
+    jinja = Environment(
+        loader=DictLoader({}),
+        extensions=[CobrastyleExtension],
+        bytecode_cache=FileSystemBytecodeCache(str(tmp_path)),
+    )
+    with pytest.raises(RuntimeError, match="bytecode_cache"):
+        configure(jinja, resolver=InMemoryResolver({}))
 
 
 def test_missing_resolver():
