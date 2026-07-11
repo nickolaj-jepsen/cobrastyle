@@ -11,6 +11,12 @@ dev = [
     "ruff>=0.15",
     "pyrefly>=1.1",
     "jinja2>=3.1",
+    "flask>=3.0",
+    "fastapi>=0.110",
+    "httpx>=0.27",
+    "click>=8.1",
+    "django>=5.2",
+    "django-stubs>=6.0.6",
 ]
 
 [tool.pytest.ini_options]

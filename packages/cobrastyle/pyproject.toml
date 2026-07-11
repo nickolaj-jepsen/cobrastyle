@@ -13,6 +13,22 @@ dependencies = [
 jinja2 = [
     "jinja2>=3.1",
 ]
+flask = [
+    "flask>=3.0",
+]
+fastapi = [
+    "fastapi>=0.110",
+]
+cli = [
+    "click>=8.1",
+]
+django = [
+    "django>=5.2",
+    "jinja2>=3.1",
+]
+
+[project.scripts]
+cobrastyle = "cobrastyle.cli:cli"
 
 [project.urls]
 Repository = "https://github.com/nickolaj-jepsen/cobrastyle"
