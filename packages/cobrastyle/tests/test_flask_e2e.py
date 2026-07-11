@@ -94,3 +94,36 @@ def test_init_app_shorthand(page_project):
 
     assert app.extensions["cobrastyle"] is extension
     assert app.test_client().get("/cobrastyle/page.css").status_code == 200
+
+
+def test_flask_hot_reload_endpoints(page_project):
+    app = flask.Flask("testapp", root_path=str(page_project))
+    Cobrastyle(app)
+
+    @app.get("/")
+    def index():
+        return flask.render_template("index.html")
+
+    client = app.test_client()
+
+    html = client.get("/").get_data(as_text=True)
+    assert 'src="/cobrastyle/__client__.js"' in html
+    assert 'data-events="/cobrastyle/__events__"' in html
+    assert client.get("/cobrastyle/__client__.js").status_code == 200
+
+    response = client.get("/cobrastyle/__events__", buffered=False)
+    assert response.headers["Content-Type"] == "text/event-stream"
+    assert next(response.response) == b": cobrastyle\n\n"
+    response.close()
+
+
+def test_flask_hot_reload_opt_out(page_project):
+    app = flask.Flask("testapp", root_path=str(page_project))
+    Cobrastyle(app, hot_reload=False)
+
+    @app.get("/")
+    def index():
+        return flask.render_template("index.html")
+
+    html = app.test_client().get("/").get_data(as_text=True)
+    assert "__client__.js" not in html

@@ -175,6 +175,23 @@ def test_wsgi_middleware_serves_raw_assets():
     assert body == b"<svg></svg>"
 
 
+def test_wsgi_middleware_never_serves_outside_the_resolver_root(tmp_path):
+    (tmp_path / "styles").mkdir()
+    (tmp_path / "styles" / "page.css").write_text(".a { color: red; }")
+    (tmp_path / "secret.txt").write_text("s3cr3t")
+    manager = CobrastyleManager(FileSystemResolver(tmp_path / "styles"))
+
+    def fallback(environ, start_response):
+        start_response("404 Not Found", [])
+        return [b"fallthrough"]
+
+    app = CobrastyleWSGIMiddleware(fallback, manager, url_prefix="/static/")
+
+    for path in ("/static/../secret.txt", "/static/../secret.css", "/static//secret.txt"):
+        _, _, body = _wsgi_get(app, path)
+        assert b"s3cr3t" not in body
+
+
 def _asgi_request(app, method="GET", path="/test.css", headers=(), root_path=""):
     scope = {"type": "http", "method": method, "path": path, "root_path": root_path, "headers": list(headers)}
     sent = []
@@ -251,18 +268,136 @@ def test_asgi_app_rejects_non_http_scopes():
         asyncio.run(app({"type": "websocket"}, receive, send))
 
 
-def test_wsgi_middleware_never_serves_outside_the_resolver_root(tmp_path):
-    (tmp_path / "styles").mkdir()
-    (tmp_path / "styles" / "page.css").write_text(".a { color: red; }")
-    (tmp_path / "secret.txt").write_text("s3cr3t")
-    manager = CobrastyleManager(FileSystemResolver(tmp_path / "styles"))
+def test_client_script_is_served():
+    from cobrastyle.serve import CLIENT_SCRIPT_PATH
+
+    manager = CobrastyleManager(InMemoryResolver({}))
+
+    result = serve(manager, CLIENT_SCRIPT_PATH)
+
+    assert result is not None
+    assert result.status == 200
+    headers = dict(result.headers)
+    assert headers["Content-Type"].startswith("text/javascript")
+    assert b"EventSource" in result.body
+
+    revalidated = serve(manager, CLIENT_SCRIPT_PATH, if_none_match=headers["ETag"])
+    assert revalidated is not None
+    assert revalidated.status == 304
+
+
+def test_poll_changes_reports_an_edit_once(tmp_path):
+    from cobrastyle.serve import poll_changes
+
+    css = tmp_path / "test.css"
+    css.write_text(".a { color: red; }")
+    os.utime(css, (1000, 1000))
+    manager = CobrastyleManager(FileSystemResolver(tmp_path))
+    manager.import_module("test.css")
+
+    seen = {}
+    assert poll_changes(manager, seen) == []  # first poll primes silently
+
+    css.write_text(".a { color: blue; }")
+    os.utime(css, (2000, 2000))
+    assert [stylesheet.path for stylesheet in poll_changes(manager, seen)] == ["test.css"]
+    assert poll_changes(manager, seen) == []
+
+
+def test_poll_changes_covers_imported_files(tmp_path):
+    from cobrastyle.serve import poll_changes
+
+    (tmp_path / "theme.css").write_text(":root { --x: red; }")
+    (tmp_path / "page.css").write_text('@import "./theme.css";\n.a { color: red; }')
+    for name in ("theme.css", "page.css"):
+        os.utime(tmp_path / name, (1000, 1000))
+    manager = CobrastyleManager(FileSystemResolver(tmp_path))
+    manager.import_module("page.css")
+
+    seen = {}
+    poll_changes(manager, seen)
+    os.utime(tmp_path / "theme.css", (2000, 2000))
+
+    assert [stylesheet.path for stylesheet in poll_changes(manager, seen)] == ["page.css"]
+
+
+def test_watch_events_stream(tmp_path):
+    import json
+
+    from cobrastyle.serve import watch_events
+
+    css = tmp_path / "test.css"
+    css.write_text(".a { color: red; }")
+    os.utime(css, (1000, 1000))
+    manager = CobrastyleManager(FileSystemResolver(tmp_path, url_prefix="/styles/"))
+    manager.import_module("test.css")
+
+    frames = watch_events(manager, sleep=lambda _: None)
+    assert next(frames) == b": cobrastyle\n\n"
+
+    css.write_text(".a { color: blue; }")
+    os.utime(css, (2000, 2000))
+    frame = next(frames)
+    assert frame.startswith(b"event: change\ndata: ")
+    assert frame.endswith(b"\n\n")
+    payload = json.loads(frame.removeprefix(b"event: change\ndata: "))
+    assert payload == {"path": "test.css", "url": "/styles/test.css"}
+
+
+def test_watch_events_heartbeat_while_idle():
+    from cobrastyle.serve import watch_events
+
+    manager = CobrastyleManager(InMemoryResolver({"a.css": ".a { color: red; }"}))
+    manager.import_module("a.css")
+
+    frames = watch_events(manager, interval=1.0, heartbeat=2.0, sleep=lambda _: None)
+    assert next(frames) == b": cobrastyle\n\n"
+    assert next(frames) == b": keep-alive\n\n"
+
+
+def test_wsgi_middleware_streams_events():
+    from cobrastyle.serve import EVENTS_PATH
+
+    manager = CobrastyleManager(InMemoryResolver({"test.css": ".a { color: red; }"}))
 
     def fallback(environ, start_response):
-        start_response("404 Not Found", [])
-        return [b"fallthrough"]
+        start_response("200 OK", [("Content-Type", "text/plain")])
+        return [b"fallback"]
 
     app = CobrastyleWSGIMiddleware(fallback, manager, url_prefix="/static/")
+    captured = {}
 
-    for path in ("/static/../secret.txt", "/static/../secret.css", "/static//secret.txt"):
-        _, _, body = _wsgi_get(app, path)
-        assert b"s3cr3t" not in body
+    def start_response(status, response_headers, exc_info=None):
+        captured["status"] = status
+        captured["headers"] = dict(response_headers)
+        return lambda _: None  # the WSGI write() callable, unused
+
+    body = app({"REQUEST_METHOD": "GET", "PATH_INFO": f"/static/{EVENTS_PATH}"}, start_response)
+    assert captured["status"] == "200 OK"
+    assert captured["headers"]["Content-Type"] == "text/event-stream"
+    assert next(iter(body)) == b": cobrastyle\n\n"
+
+    # Anything but a plain GET falls through to the app
+    _, _, body = _wsgi_get(app, f"/static/{EVENTS_PATH}", method="POST")
+    assert body == b"fallback"
+
+
+def test_asgi_app_streams_events_until_disconnect():
+    manager = CobrastyleManager(InMemoryResolver({"test.css": ".a { color: red; }"}))
+    app = CobrastyleASGIApp(manager)
+    scope = {"type": "http", "method": "GET", "path": "/__events__", "root_path": "", "headers": []}
+    messages = []
+    received = iter([{"type": "http.disconnect"}])
+
+    async def receive():
+        return next(received)
+
+    async def send(message):
+        messages.append(message)
+
+    asyncio.run(app(scope, receive, send))
+
+    start = messages[0]
+    assert start["status"] == 200
+    assert dict(start["headers"])[b"content-type"] == b"text/event-stream"
+    assert messages[1] == {"type": "http.response.body", "body": b": cobrastyle\n\n", "more_body": True}

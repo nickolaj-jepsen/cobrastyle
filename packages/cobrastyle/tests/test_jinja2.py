@@ -396,3 +396,114 @@ def test_from_string_recompiles_reuse_one_page_registry_entry():
         jinja.from_string('{% cobrastyle s = "a.css" %}{{ cobrastyle.links() }}').render()
 
     assert len(extension._pages) == 1
+
+
+def test_fragment_links_emits_oob_script():
+    resources = {"test.css": ".header { color: red; }"}
+    result = render_jinja(
+        '{% cobrastyle styles = "test.css" %}{{ cobrastyle.fragment_links() }}<div class="{{ styles.header }}"></div>',
+        resources,
+    )
+
+    assert '<div hx-swap-oob="beforeend:head"><script>' in result
+    assert '["test.css"]' in result
+    assert '<div class="header"></div>' in result
+
+
+def test_fragment_links_composed_module_is_bundled_not_listed():
+    resources = {
+        "base.css": ".base { color: black; }",
+        "button.css": '.button { composes: base from "./base.css"; background: red; }',
+    }
+    result = render_jinja('{% cobrastyle styles = "button.css" %}{{ cobrastyle.fragment_links() }}', resources)
+
+    assert '["button.css"]' in result
+    assert "base.css" not in result
+
+
+def test_fragment_links_empty_without_modules():
+    result = render_jinja("x{{ cobrastyle.fragment_links() }}y", {})
+
+    assert result == "xy"
+
+
+def test_fragment_links_escapes_the_nonce():
+    resources = {"test.css": ".header { color: red; }"}
+    result = render_jinja(
+        '{% cobrastyle styles = "test.css" %}{{ cobrastyle.fragment_links(nonce=\'ab"c\') }}',
+        resources,
+    )
+
+    assert '<script nonce="ab&quot;c">' in result
+    assert 'hx-swap-oob="beforeend:head"' in result
+
+
+def test_fragment_links_uses_manifest_urls():
+    from cobrastyle.manifest import Manifest, ModuleEntry
+
+    manifest = Manifest(
+        modules={"page.css": ModuleEntry(file="page.abc.css", url="/static/page.abc.css", classes={"title": "t"})}
+    )
+    jinja = Environment(loader=DictLoader({}), extensions=[CobrastyleExtension])
+    configure(jinja, manifest=manifest)
+
+    result = jinja.from_string('{% cobrastyle styles = "page.css" %}{{ cobrastyle.fragment_links() }}').render()
+
+    assert '["/static/page.abc.css"]' in result
+
+
+def test_links_emit_hot_reload_script_when_configured():
+    jinja = Environment(loader=DictLoader({}), extensions=[CobrastyleExtension])
+    configure(jinja, resolver=InMemoryResolver({"a.css": ".a { color: red; }"}), hot_reload="/styles/")
+
+    result = jinja.from_string('{% cobrastyle s = "a.css" %}{{ cobrastyle.links() }}').render()
+
+    assert '<script src="/styles/__client__.js" data-events="/styles/__events__" defer></script>' in result
+
+
+def test_links_hot_reload_defaults_off():
+    result = render_jinja('{% cobrastyle s = "a.css" %}{{ cobrastyle.links() }}', {"a.css": ".a { color: red; }"})
+
+    assert "__client__.js" not in result
+
+
+def test_hot_reload_prefix_comes_from_the_resolver(tmp_path):
+    from cobrastyle import FileSystemResolver
+
+    (tmp_path / "a.css").write_text(".a { color: red; }")
+    jinja = Environment(loader=DictLoader({}), extensions=[CobrastyleExtension])
+    configure(jinja, resolver=FileSystemResolver(tmp_path, url_prefix="/x/"), hot_reload=True)
+
+    result = jinja.from_string('{% cobrastyle s = "a.css" %}{{ cobrastyle.links() }}').render()
+
+    assert 'src="/x/__client__.js"' in result
+
+
+def test_hot_reload_true_requires_a_url_prefix():
+    jinja = Environment(extensions=[CobrastyleExtension])
+
+    with pytest.raises(TypeError, match="url_prefix"):
+        configure(jinja, resolver=InMemoryResolver({}), hot_reload=True)
+
+
+def test_hot_reload_is_rejected_in_manifest_mode():
+    from typing import Any, cast
+
+    from cobrastyle.manifest import Manifest
+
+    jinja = Environment(extensions=[CobrastyleExtension])
+    untyped_configure = cast(Any, configure)  # the overloads make this call unwritable in typed code
+
+    with pytest.raises(TypeError, match="dev-only"):
+        untyped_configure(jinja, manifest=Manifest(modules={}), hot_reload=True)
+
+
+def test_fragment_links_carries_the_cloak_machinery():
+    resources = {"test.css": ".header { color: red; }"}
+    result = render_jinja('{% cobrastyle styles = "test.css" %}{{ cobrastyle.fragment_links() }}', resources)
+
+    # The reveal runs whether stylesheets loaded, errored, or timed out
+    assert "[data-cobrastyle-cloak]{display:none !important}" in result
+    assert 'removeAttribute("data-cobrastyle-cloak")' in result
+    assert "link.onload=link.onerror=" in result
+    assert "setTimeout(resolve,3000)" in result

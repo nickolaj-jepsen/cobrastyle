@@ -135,6 +135,63 @@ WHITENOISE_IMMUTABLE_FILE_TEST = immutable_file_test
 
 (Hashed storages need no help — WhiteNoise already recognizes their names.)
 
+### Fragments (HTMX)
+
+A template rendered as a fragment (an HTMX partial swap) never renders `<head>`, so a
+stylesheet only the fragment uses would arrive unlinked. Call `fragment_links()` in the
+fragment instead of `links()`:
+
+```jinja
+{% cobrastyle styles = "tip.css" %}
+{{ cobrastyle.fragment_links() }}
+<aside class="{{ styles.tip }}" data-cobrastyle-cloak>...</aside>
+```
+
+```django
+{% load cobrastyle %}
+{% cobrastyle "tip.css" as styles %}
+{% cobrastyle_fragment_links %}
+<aside class="{{ styles.tip }}" data-cobrastyle-cloak>...</aside>
+```
+
+This emits a small out-of-band script (`hx-swap-oob="beforeend:head"`) that appends the fragment's
+stylesheet links to the page's `<head>`, skips any the page already has, and removes
+itself. HTMX processes out-of-band elements before the main swap, so the CSS starts
+loading before the fragment markup lands, and repeated swaps never duplicate links.
+Dev and prod behave the same; URLs come from the compiler or the manifest as usual.
+
+Inserted links still take a network round trip to load, so a fragment can paint
+unstyled for a moment. The `data-cobrastyle-cloak` attribute on the fragment root (as
+above) closes that gap: such elements stay hidden until every stylesheet the script
+inserted has loaded, then reveal fully styled — immediately when the CSS was already
+present, and after at most 3 seconds if a stylesheet never loads. Only use the
+attribute in fragments that call `fragment_links()`; the reveal is part of it.
+
+Two caveats. The markup relies on HTMX's `hx-swap-oob` handling, so a swap done with
+plain `fetch()` + `innerHTML` will not execute it. And the script is inline: under a
+strict CSP, pass a nonce — `{{ cobrastyle.fragment_links(nonce=nonce) }}` in Jinja,
+`{% cobrastyle_fragment_links nonce=request.csp_nonce %}` in DTL. The nonce carries
+over to the cloak `<style>` the script creates, so allow it in `style-src` too.
+
+### CSS hot reload (dev)
+
+In dev mode the framework adapters turn on hot reload whenever they are also serving
+the CSS (which is the default). `links()` then emits a client script that subscribes to
+a server-sent-events endpoint on the dev CSS server and swaps changed `<link>`s in
+place: edit a stylesheet — or a file it `@import`s or composes from — and the browser
+picks it up within about a second, without a reload, page state intact.
+
+Opt out with `Cobrastyle(app, hot_reload=False)`, `install(..., hot_reload=False)`, or
+`COBRASTYLE = {"HOT_RELOAD": False}`. On a bare environment it's off by default;
+`configure(env, resolver=..., hot_reload=True)` enables it, provided the dev CSS server
+(the WSGI middleware or ASGI app from `cobrastyle.serve`) is mounted at the resolver's
+URL prefix, since that's where the events endpoint lives.
+
+Change detection polls the compiled modules' source files a few times a second, per
+connection; nothing of this exists in manifest mode. Under WSGI the event stream
+occupies a worker thread per open tab. Werkzeug's and Django's dev servers are threaded,
+so in practice this only matters on a deliberately single-threaded setup.
+
 ### Building (non-Django)
 
 ```sh

@@ -3,12 +3,13 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from django.conf import settings
-from django.http import Http404, HttpRequest, HttpResponse, HttpResponseNotModified
+from django.http import Http404, HttpRequest, HttpResponse, HttpResponseNotModified, StreamingHttpResponse
+from django.http.response import HttpResponseBase
 from django.template import engines
 from jinja2 import Environment
 
 from cobrastyle.jinja2 import CobrastyleExtension
-from cobrastyle.serve import serve
+from cobrastyle.serve import EVENTS_PATH, SSE_HEADERS, serve, watch_events
 
 if TYPE_CHECKING:
     from cobrastyle.manager import CobrastyleManager
@@ -25,7 +26,7 @@ def _manager() -> CobrastyleManager | None:
     return get_runtime().manager
 
 
-def stylesheet(request: HttpRequest, path: str) -> HttpResponse:
+def stylesheet(request: HttpRequest, path: str) -> HttpResponseBase:
     """Serve compiled CSS (and raw url() assets) from the cobrastyle manager. DEBUG only."""
     if not settings.DEBUG:
         raise Http404
@@ -35,6 +36,14 @@ def stylesheet(request: HttpRequest, path: str) -> HttpResponse:
         raise Http404 from None
     if manager is None:
         raise Http404
+    if path == EVENTS_PATH and request.method == "GET":
+        # A long-lived stream pins a worker thread; runserver is threaded, so
+        # that's one thread per tab — fine for the DEBUG-only path this is.
+        response = StreamingHttpResponse(watch_events(manager), content_type="text/event-stream")
+        for name, value in SSE_HEADERS:
+            if name != "Content-Type":
+                response[name] = value
+        return response
     result = serve(manager, path, method=request.method or "GET", if_none_match=request.headers.get("If-None-Match"))
     if result is None:
         raise Http404

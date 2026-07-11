@@ -7,3 +7,7 @@ def index(request):
 
 def about(request):
     return render(request, "about.html", {"emphasis": True})  # found in the DTL backend's dirs
+
+
+def tip_fragment(request):
+    return render(request, "_tip.html")  # DTL fragment, styled out-of-band for HTMX swaps

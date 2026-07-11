@@ -24,4 +24,8 @@ def create_app() -> Flask:
     def about():
         return render_template("about.html")
 
+    @app.get("/fragments/tip")
+    def tip_fragment():
+        return render_template("_tip.html")
+
     return app

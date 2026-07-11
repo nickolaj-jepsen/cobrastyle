@@ -11,7 +11,10 @@ uv run python manage.py runserver
 ```
 
 Open http://127.0.0.1:8000/ — stylesheets compile on demand and are served at
-`/cobrastyle/` (DEBUG only). Edit a `.css` file and refresh.
+`/cobrastyle/` (DEBUG only). Edit a `.css` file and the styles update in the open page
+without a reload. The About page's "Load a tip over HTMX" button fetches a DTL fragment
+whose stylesheet the page never linked; `{% cobrastyle_fragment_links %}` adds it
+out-of-band before the swap.
 
 ## Prod mode
 

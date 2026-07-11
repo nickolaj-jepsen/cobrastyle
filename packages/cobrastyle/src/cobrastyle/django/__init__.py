@@ -24,6 +24,7 @@ class CobrastyleSettings(TypedDict, total=False):
     DEV: bool
     ROOT: str | Path
     URL_PREFIX: str
+    HOT_RELOAD: bool
     MANIFEST: Manifest | str | Path
     OUTPUT_DIR: str | Path
     BUILD_URL_PREFIX: str
@@ -59,7 +60,9 @@ def configure_from_settings(env: Environment) -> None:
     config = app_config()
     common = common_options(config)
     if config.get("DEV", settings.DEBUG):
-        configure(env, resolver=dev_resolver(config), **common)
+        # Default-on: the documented dev setup includes cobrastyle.django.urls,
+        # which serves the events endpoint. COBRASTYLE["HOT_RELOAD"] = False opts out.
+        configure(env, resolver=dev_resolver(config), hot_reload=config.get("HOT_RELOAD", True), **common)
     else:
         manifest = config.get("MANIFEST", output_dir(config) / "manifest.json")
         configure(env, manifest=manifest, url_map=static_url_map(config), **common)

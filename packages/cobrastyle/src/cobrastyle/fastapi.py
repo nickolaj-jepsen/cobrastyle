@@ -23,6 +23,7 @@ def install(
     resolver: FileResolver,
     url_prefix: str = ...,
     serve: bool = ...,
+    hot_reload: bool | None = ...,
     **options: Unpack[ConfigureOptions],
 ) -> None: ...
 @overload
@@ -33,6 +34,7 @@ def install(
     root: str | Path,
     url_prefix: str = ...,
     serve: bool = ...,
+    hot_reload: bool | None = ...,
     **options: Unpack[ConfigureOptions],
 ) -> None: ...
 @overload
@@ -52,6 +54,7 @@ def install(
     root: str | Path | None = None,
     url_prefix: str = "/cobrastyle/",
     serve: bool = True,
+    hot_reload: bool | None = None,
     **options: Unpack[ConfigureOptions],
 ) -> None:
     """Wire cobrastyle into a Starlette/FastAPI ``Jinja2Templates`` (or bare Environment).
@@ -59,7 +62,8 @@ def install(
     ``target`` is a ``Jinja2Templates`` instance or a ``jinja2.Environment``.
     Dev mode: provide either ``resolver`` or ``root`` (styles directory,
     served at ``url_prefix``); when ``app`` is given and ``serve`` is on, the
-    dev CSS server is mounted at the resolver's URL prefix. Prod mode: pass
+    dev CSS server is mounted at the resolver's URL prefix, with CSS hot
+    reload on (``hot_reload=`` overrides either way). Prod mode: pass
     ``manifest=`` instead — nothing is mounted, the built files are static.
     """
     environment = target if isinstance(target, Environment) else getattr(target, "env", None)
@@ -76,10 +80,14 @@ def install(
         if root is None:
             raise TypeError("Provide either resolver=, root= (the styles directory), or manifest= (prod)")
         resolver = FileSystemResolver(root, url_prefix=url_prefix)
-    configure(environment, resolver=resolver, **options)
+    prefix = resolver.url_prefix if isinstance(resolver, HasUrlPrefix) else url_prefix
+    serving = app is not None and serve
+    if hot_reload is None:
+        hot_reload = serving
+    configure(environment, resolver=resolver, hot_reload=prefix if hot_reload else False, **options)
 
-    if app is not None and serve:
+    if serving:
+        assert app is not None
         extension = CobrastyleExtension.get(environment)
         assert extension is not None  # add_extension above guarantees it
-        prefix = (resolver.url_prefix if isinstance(resolver, HasUrlPrefix) else url_prefix).rstrip("/")
-        app.mount(prefix, CobrastyleASGIApp(extension.manager))
+        app.mount(prefix.rstrip("/"), CobrastyleASGIApp(extension.manager))

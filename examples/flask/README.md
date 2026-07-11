@@ -9,7 +9,10 @@ uv run flask --app app run
 ```
 
 Open http://127.0.0.1:5000/ — stylesheets in `styles/` compile on demand and are served
-at `/cobrastyle/`. Edit a `.css` file and refresh.
+at `/cobrastyle/`. Edit a `.css` file (or `theme.css`, which `about.css` imports) and the
+styles update in the open page without a reload. The home page's "Load a tip over HTMX"
+button fetches a fragment whose stylesheet (`tip.css`) the page never linked;
+`fragment_links()` in the fragment adds it out-of-band before the swap.
 
 ## Prod mode
 

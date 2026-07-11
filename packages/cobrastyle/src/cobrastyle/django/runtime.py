@@ -24,10 +24,13 @@ class DTLRuntime:
         manager: CobrastyleManager | None = None,
         manifest: Manifest | None = None,
         url_map: Callable[[ModuleEntry], str] | None = None,
+        hot_reload_prefix: str | None = None,
     ):
         self.source = StyleSource(
             manager=manager, manifest=manifest, url_map=url_map, rebuild_hint="manage.py cobrastyle_build"
         )
+        # Serving prefix the hot-reload client loads from; None disables the script
+        self.hot_reload_prefix = hot_reload_prefix
         # origin.name (absolute) → module paths / relative template name
         self.pages: dict[str, list[str]] = {}
         self.page_names: dict[str, str] = {}
@@ -99,7 +102,14 @@ def _create() -> DTLRuntime:
     if config.get("DEV", settings.DEBUG):
         from cobrastyle.manager import CobrastyleManager
 
-        return DTLRuntime(manager=CobrastyleManager(dev_resolver(config), **common_options(config)))
+        resolver = dev_resolver(config)
+        # Default-on: the documented dev setup includes cobrastyle.django.urls,
+        # which serves the events endpoint. COBRASTYLE["HOT_RELOAD"] = False opts out.
+        hot_reload_prefix = resolver.url_prefix if config.get("HOT_RELOAD", True) else None
+        return DTLRuntime(
+            manager=CobrastyleManager(resolver, **common_options(config)),
+            hot_reload_prefix=hot_reload_prefix,
+        )
     manifest = config.get("MANIFEST", output_dir(config) / "manifest.json")
     if not isinstance(manifest, Manifest):
         manifest = Manifest.load(manifest)

@@ -6,5 +6,7 @@
     <h1 class="{{ styles.title }}">CSS modules for Python</h1>
     <p>Class names are scoped per stylesheet, so this page can't collide with any other.</p>
     <a class="{{ cx(styles.cta, {styles.featured: featured}) }}" href="/about">How it works</a>
+    <button class="{{ styles.cta }}" hx-get="/fragments/tip" hx-target="#tip">Load a tip over HTMX</button>
+    <div id="tip"></div>
   </section>
 {% endblock %}

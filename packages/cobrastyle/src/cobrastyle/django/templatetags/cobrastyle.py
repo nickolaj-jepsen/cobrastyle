@@ -6,7 +6,9 @@ from django.utils.safestring import SafeString, mark_safe
 
 from cobrastyle.cx import cx
 from cobrastyle.django.runtime import get_runtime
+from cobrastyle.fragments import fragment_links_html
 from cobrastyle.paths import normalize_path
+from cobrastyle.serve import hot_reload_script_html
 
 register = template.Library()
 
@@ -64,19 +66,62 @@ def cobrastyle_links(parser: template.base.Parser, token: template.base.Token) -
     return LinksNode(extra)
 
 
+def _page_paths(context: template.Context, origin: template.base.Origin | None, extra: tuple[str, ...]) -> list[str]:
+    """The module paths a links tag at ``origin`` covers, own-template modules first."""
+    runtime = get_runtime()
+    top_origin = getattr(getattr(context, "template", None), "origin", None)
+    paths = runtime.page_modules(origin)
+    for path in (*runtime.page_modules(top_origin), *extra):
+        if path not in paths:
+            paths.append(path)
+    return paths
+
+
 class LinksNode(template.Node):
     def __init__(self, extra: tuple[str, ...]):
         self.extra = extra
 
     def render(self, context: template.Context) -> SafeString:
         runtime = get_runtime()
-        top_origin = getattr(getattr(context, "template", None), "origin", None)
         # self.origin is stamped by the parser: the template this tag lives in
-        paths = runtime.page_modules(getattr(self, "origin", None))
-        for path in (*runtime.page_modules(top_origin), *self.extra):
-            if path not in paths:
-                paths.append(path)
-        return mark_safe("".join(f'<link rel="stylesheet" href="{escape(runtime.url_for(path))}" />' for path in paths))
+        paths = _page_paths(context, getattr(self, "origin", None), self.extra)
+        links = "".join(f'<link rel="stylesheet" href="{escape(runtime.url_for(path))}" />' for path in paths)
+        if runtime.hot_reload_prefix is not None:
+            links += hot_reload_script_html(runtime.hot_reload_prefix)
+        return mark_safe(links)
+
+
+@register.tag("cobrastyle_fragment_links")
+def cobrastyle_fragment_links(parser: template.base.Parser, token: template.base.Token) -> template.Node:
+    """``{% cobrastyle_fragment_links %}`` — fragment-response variant of ``cobrastyle_links``.
+
+    For templates rendered as partials (HTMX swaps), where no ``<head>`` ever
+    renders: emits an out-of-band script (``hx-swap-oob``) that adds the
+    fragment's stylesheet links to the page's ``<head>`` before the swapped
+    markup settles, skipping links the page already has. Extra constant paths
+    are accepted like ``cobrastyle_links``; ``nonce=var`` feeds the script's
+    CSP nonce attribute: ``{% cobrastyle_fragment_links nonce=request.csp_nonce %}``.
+    """
+    nonce = None
+    extra = []
+    for bit in token.split_contents()[1:]:
+        if bit.startswith("nonce="):
+            nonce = parser.compile_filter(bit.removeprefix("nonce="))
+        else:
+            extra.append(_constant_path(bit, "cobrastyle_fragment_links"))
+    return FragmentLinksNode(tuple(extra), nonce)
+
+
+class FragmentLinksNode(template.Node):
+    def __init__(self, extra: tuple[str, ...], nonce: FilterExpression | None):
+        self.extra = extra
+        self.nonce = nonce
+
+    def render(self, context: template.Context) -> SafeString:
+        runtime = get_runtime()
+        urls = [runtime.url_for(path) for path in _page_paths(context, getattr(self, "origin", None), self.extra)]
+        nonce = self.nonce.resolve(context) if self.nonce is not None else None
+        return mark_safe(fragment_links_html(urls, nonce=nonce or None))
 
 
 # (value, condition, else-value)

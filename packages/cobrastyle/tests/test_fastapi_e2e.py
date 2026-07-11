@@ -95,3 +95,32 @@ def test_fastapi_serves_raw_assets(page_project):
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("image/svg")
     assert response.content == b"<svg/>"
+
+
+def test_fastapi_hot_reload_endpoints(page_project):
+    app = fastapi.FastAPI()
+    templates = Jinja2Templates(directory=str(page_project / "templates"))
+    install(templates, app, root=page_project / "styles")
+
+    @app.get("/")
+    def index(request: fastapi.Request):
+        return templates.TemplateResponse(request, "index.html")
+
+    client = TestClient(app)
+
+    html = client.get("/").text
+    assert 'src="/cobrastyle/__client__.js"' in html
+    assert 'data-events="/cobrastyle/__events__"' in html
+    assert client.get("/cobrastyle/__client__.js").status_code == 200
+    # The event stream itself never ends, which deadlocks TestClient's in-thread
+    # transport — the streaming loop is covered in test_serve.py with an explicit
+    # disconnect; here the mount above proves the endpoint is reachable.
+
+
+def test_fastapi_hot_reload_follows_serving(page_project):
+    templates = Jinja2Templates(directory=str(page_project / "templates"))
+    # No app to mount the events endpoint on: hot reload stays off
+    install(templates, root=page_project / "styles")
+
+    html = templates.env.get_template("index.html").render()
+    assert "__client__.js" not in html

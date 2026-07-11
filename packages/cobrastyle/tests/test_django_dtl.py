@@ -95,7 +95,8 @@ def test_links_with_inherited_head(project):
     with override_settings(**project_settings(project)):
         html = render("child.html")
 
-    assert '<head><link rel="stylesheet" href="/cobrastyle/page.css" /></head>' in html
+    # The head also carries the hot-reload script, on by default in dev
+    assert '<head><link rel="stylesheet" href="/cobrastyle/page.css" />' in html
     assert '<h1 class="title">Hi</h1>' in html
 
 
@@ -547,3 +548,54 @@ def test_prod_links_include_the_parents_own_styles_from_manifest(project):
         assert manifest.modules["layout.css"].url in content
         assert manifest.modules["page.css"].url in content
         assert content.index("layout.") < content.index("page.")
+
+
+def test_fragment_links_tag_emits_oob_script(project):
+    (project / "templates" / "_frag.html").write_text(
+        '{% load cobrastyle %}{% cobrastyle "page.css" as styles %}'
+        '{% cobrastyle_fragment_links %}<div class="{{ styles.title }}"></div>'
+    )
+    with override_settings(**project_settings(project)):
+        html = render("_frag.html")
+
+    assert '<div hx-swap-oob="beforeend:head"><script>' in html
+    assert '"/cobrastyle/page.css"' in html
+    assert '<div class="title"></div>' in html
+
+
+def test_fragment_links_tag_escapes_the_nonce(project):
+    (project / "templates" / "_frag.html").write_text(
+        '{% load cobrastyle %}{% cobrastyle "page.css" as styles %}{% cobrastyle_fragment_links nonce=nonce %}'
+    )
+    with override_settings(**project_settings(project)):
+        html = render("_frag.html", {"nonce": 'ab"c'})
+
+    assert 'nonce="ab&quot;c"' in html
+
+
+def test_links_emit_hot_reload_script_in_dev(project):
+    with override_settings(**project_settings(project)):
+        html = render("index.html")
+
+    assert 'src="/cobrastyle/__client__.js"' in html
+    assert 'data-events="/cobrastyle/__events__"' in html
+
+
+def test_hot_reload_opt_out(project):
+    settings = project_settings(
+        project, cobrastyle={"ROOT": project / "styles", "MODULE_PATTERN": "[local]", "HOT_RELOAD": False}
+    )
+    with override_settings(**settings):
+        html = render("index.html")
+
+    assert "__client__.js" not in html
+
+
+def test_events_endpoint_streams(project):
+    with override_settings(**project_settings(project), ROOT_URLCONF="cobrastyle.django.urls"):
+        render("index.html")
+        response = Client().get("/__events__")
+        assert response["Content-Type"] == "text/event-stream"
+        stream = iter(getattr(response, "streaming_content"))  # noqa: B009 -- the test client's response type hides it
+        assert next(stream) == b": cobrastyle\n\n"
+        response.close()

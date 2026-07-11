@@ -1,0 +1,7 @@
+.tip {
+  margin-top: 1.5rem;
+  padding: 0.75rem 1rem;
+  border-left: 3px solid #16a34a;
+  border-radius: 0 0.4rem 0.4rem 0;
+  background: #f0fdf4;
+}

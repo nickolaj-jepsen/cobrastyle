@@ -5,6 +5,7 @@
     <title>{% block title %}cobrastyle demo{% endblock %}</title>
     {# link collection is per top-level template, so the parent lists its own module #}
     {% cobrastyle_links "base.css" %}
+    <script src="https://unpkg.com/htmx.org@2.0.7" defer></script>
   </head>
   <body class="{{ layout.page }}">
     <nav class="{{ layout.nav }}">

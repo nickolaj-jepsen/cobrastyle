@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
+import html
+import json
 import mimetypes
-from collections.abc import Awaitable, Callable, Iterable, MutableMapping
+import time
+from collections.abc import Awaitable, Callable, Iterable, Iterator, MutableMapping
 from http import HTTPStatus
 from typing import TYPE_CHECKING, Any, NamedTuple
 
@@ -22,6 +26,20 @@ CONTENT_TYPE = "text/css; charset=utf-8"
 # Dev responses must revalidate on every request so CSS edits show up on refresh.
 CACHE_CONTROL = "no-cache"
 
+# Reserved names under the dev serving prefix (hot reload); never valid stylesheet paths.
+EVENTS_PATH = "__events__"
+CLIENT_SCRIPT_PATH = "__client__.js"
+
+EVENTS_POLL_INTERVAL = 0.3
+# Comment frames on an idle stream, so buffering proxies don't close the connection.
+EVENTS_HEARTBEAT = 15.0
+
+SSE_HEADERS = [
+    ("Content-Type", "text/event-stream"),
+    ("Cache-Control", "no-cache"),
+    ("X-Accel-Buffering", "no"),
+]
+
 _RESOLVE_ERRORS = (KeyError, ValueError, FileNotFoundError, IsADirectoryError, NotADirectoryError, PermissionError)
 
 
@@ -35,6 +53,102 @@ class Served(NamedTuple):
     status: int
     headers: list[tuple[str, str]]
     body: bytes
+
+
+# On a change event, swap in a cache-busted clone of each matching <link> and drop
+# the old one once the clone has loaded, so the page never renders unstyled.
+CLIENT_JS = """\
+(() => {
+  const source = new EventSource(document.currentScript.dataset.events);
+  source.addEventListener("change", (event) => {
+    const { url } = JSON.parse(event.data);
+    for (const link of document.querySelectorAll('link[rel="stylesheet"]')) {
+      const href = link.getAttribute("href");
+      if (href === null || href.split("?")[0] !== url) continue;
+      const fresh = link.cloneNode();
+      fresh.href = url + "?t=" + Date.now();
+      fresh.onload = () => link.remove();
+      fresh.onerror = () => fresh.remove();
+      link.after(fresh);
+    }
+  });
+})();
+"""
+
+_CLIENT_RESOURCE = Resource(
+    CLIENT_JS.encode(),
+    "text/javascript; charset=utf-8",
+    f'W/"{hashlib.sha256(CLIENT_JS.encode()).hexdigest()[:16]}"',
+)
+
+
+def hot_reload_script_html(url_prefix: str) -> str:
+    """The dev-only script tag loading the hot-reload client from the serving prefix."""
+    prefix = html.escape(url_prefix if url_prefix.endswith("/") else url_prefix + "/", quote=True)
+    return f'<script src="{prefix}{CLIENT_SCRIPT_PATH}" data-events="{prefix}{EVENTS_PATH}" defer></script>'
+
+
+def _freshness_token(manager: CobrastyleManager, stylesheet: Stylesheet) -> tuple[object, ...]:
+    tokens: list[object] = []
+    for dep, _ in stylesheet.dep_mtimes:
+        try:
+            tokens.append(manager.resolver.mtime(dep))
+        except (KeyError, OSError):
+            tokens.append("missing")
+    return tuple(tokens)
+
+
+def poll_changes(manager: CobrastyleManager, seen: dict[str, tuple[object, ...]]) -> list[Stylesheet]:
+    """Return cached stylesheets whose source files changed since the last call with ``seen``.
+
+    ``seen`` is the caller's (per-connection) freshness state; stylesheets it
+    doesn't know yet are primed silently — a module compiled mid-connection is
+    new, not changed.
+    """
+    changed = []
+    for stylesheet in manager.stylesheets:
+        token = _freshness_token(manager, stylesheet)
+        previous = seen.get(stylesheet.path)
+        seen[stylesheet.path] = token
+        if previous is not None and previous != token:
+            changed.append(stylesheet)
+    return changed
+
+
+def event_frames(manager: CobrastyleManager, seen: dict[str, tuple[object, ...]]) -> list[bytes]:
+    """SSE ``change`` frames for every stylesheet :func:`poll_changes` reports."""
+    return [
+        f"event: change\ndata: {json.dumps({'path': s.path, 'url': s.url})}\n\n".encode()
+        for s in poll_changes(manager, seen)
+    ]
+
+
+def watch_events(
+    manager: CobrastyleManager,
+    *,
+    interval: float = EVENTS_POLL_INTERVAL,
+    heartbeat: float = EVENTS_HEARTBEAT,
+    sleep: Callable[[float], None] = time.sleep,
+) -> Iterator[bytes]:
+    """SSE frames for the hot-reload events endpoint: an opening comment (flushes
+    headers through buffering servers), then ``change`` events as stylesheet
+    sources change, with keep-alive comments while idle. Never returns; the
+    consumer streams it until the client disconnects."""
+    seen: dict[str, tuple[object, ...]] = {}
+    poll_changes(manager, seen)
+    yield b": cobrastyle\n\n"
+    idle = 0.0
+    while True:
+        sleep(interval)
+        frames = event_frames(manager, seen)
+        if frames:
+            yield from frames
+            idle = 0.0
+        else:
+            idle += interval
+            if idle >= heartbeat:
+                yield b": keep-alive\n\n"
+                idle = 0.0
 
 
 def serve(
@@ -51,7 +165,7 @@ def serve(
     """
     if method not in ("GET", "HEAD"):
         return None
-    resource = get_resource(manager, path)
+    resource = _CLIENT_RESOURCE if path == CLIENT_SCRIPT_PATH else get_resource(manager, path)
     if resource is None:
         return None
     if _etag_matches(if_none_match, resource.etag):
@@ -134,6 +248,11 @@ class CobrastyleWSGIMiddleware:
     def __call__(self, environ: WSGIEnvironment, start_response: StartResponse) -> Iterable[bytes]:
         path = environ.get("PATH_INFO", "")
         method = environ.get("REQUEST_METHOD", "GET")
+        if method == "GET" and path == self.url_prefix + EVENTS_PATH:
+            # A long-lived streaming response pins a worker thread; the default dev
+            # servers (werkzeug, runserver) are threaded, so that's one thread per tab.
+            start_response("200 OK", list(SSE_HEADERS))
+            return watch_events(self.manager)
         if method in ("GET", "HEAD") and path.startswith(self.url_prefix):
             result = serve(
                 self.manager,
@@ -166,6 +285,9 @@ class CobrastyleASGIApp:
         root_path = scope.get("root_path", "")
         if root_path and path.startswith(root_path):
             path = path[len(root_path) :]
+        if scope["method"] == "GET" and path.lstrip("/") == EVENTS_PATH:
+            await self._serve_events(receive, send)
+            return
         request_headers = dict(scope.get("headers", []))
         result = serve(
             self.manager,
@@ -178,6 +300,36 @@ class CobrastyleASGIApp:
             return
         headers = [(name.lower().encode(), value.encode()) for name, value in result.headers]
         await _respond(send, result.status, headers, result.body)
+
+    async def _serve_events(self, receive: Receive, send: Send) -> None:
+        headers = [(name.lower().encode(), value.encode()) for name, value in SSE_HEADERS]
+        await send({"type": "http.response.start", "status": 200, "headers": headers})
+        seen: dict[str, tuple[object, ...]] = {}
+        poll_changes(self.manager, seen)
+        await send({"type": "http.response.body", "body": b": cobrastyle\n\n", "more_body": True})
+        disconnected = asyncio.ensure_future(_wait_for_disconnect(receive))
+        idle = 0.0
+        try:
+            while True:
+                done, _ = await asyncio.wait({disconnected}, timeout=EVENTS_POLL_INTERVAL)
+                if disconnected in done:
+                    return
+                frames = event_frames(self.manager, seen)
+                if not frames:
+                    idle += EVENTS_POLL_INTERVAL
+                    if idle >= EVENTS_HEARTBEAT:
+                        frames = [b": keep-alive\n\n"]
+                if frames:
+                    idle = 0.0
+                    for frame in frames:
+                        await send({"type": "http.response.body", "body": frame, "more_body": True})
+        finally:
+            disconnected.cancel()
+
+
+async def _wait_for_disconnect(receive: Receive) -> None:
+    while (await receive())["type"] != "http.disconnect":
+        pass
 
 
 async def _respond(send: Send, status: int, headers: list[tuple[bytes, bytes]], body: bytes) -> None:

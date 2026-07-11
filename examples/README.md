@@ -11,7 +11,9 @@ Three self-contained example apps, each a small two-page site that runs in dev m
 
 All three demonstrate cross-file `composes` (a shared `base.css` primitive), `@import`
 between modules (a `theme.css` bundled into `about.css`), and a `url()` asset flowing
-through dev serving and the hashed prod build.
+through dev serving and the hashed prod build. Dev mode includes CSS hot reload, and the
+Flask and Django apps each have an HTMX endpoint serving a fragment that links its own
+stylesheet out-of-band.
 
 Setup once from the repo root (builds the Rust extension):
 
