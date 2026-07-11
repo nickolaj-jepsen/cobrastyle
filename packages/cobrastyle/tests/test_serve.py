@@ -1,7 +1,8 @@
+import asyncio
 import os
 
 from cobrastyle import CobrastyleManager, FileSystemResolver, InMemoryResolver
-from cobrastyle.serve import CobrastyleWSGIMiddleware, get_css
+from cobrastyle.serve import CobrastyleASGIApp, CobrastyleWSGIMiddleware, get_css, serve
 
 
 def test_get_css_compiles():
@@ -39,8 +40,28 @@ def test_etag_changes_with_content(tmp_path):
     assert first[1] != second[1]
 
 
-def _wsgi_get(app, path, headers=None):
-    environ = {"REQUEST_METHOD": "GET", "PATH_INFO": path}
+def test_serve_if_none_match_forms():
+    manager = CobrastyleManager(InMemoryResolver({"test.css": ".a { color: red; }"}), module_pattern="[local]")
+    first = serve(manager, "test.css")
+    assert first is not None
+    etag = dict(first.headers)["ETag"]
+    opaque = etag.removeprefix("W/")
+
+    def status(if_none_match):
+        result = serve(manager, "test.css", if_none_match=if_none_match)
+        assert result is not None
+        return result.status
+
+    assert status(None) == 200
+    assert status('"unrelated"') == 200
+    assert status(etag) == 304
+    assert status(f'"unrelated", {etag}') == 304
+    assert status(opaque) == 304  # strong form still matches: comparison is weak
+    assert status("*") == 304
+
+
+def _wsgi_get(app, path, headers=None, method="GET"):
+    environ = {"REQUEST_METHOD": method, "PATH_INFO": path}
     for name, value in (headers or {}).items():
         environ["HTTP_" + name.upper().replace("-", "_")] = value
     captured = {}
@@ -74,3 +95,45 @@ def test_wsgi_middleware_serves_and_falls_through():
     assert body == b"fallback"
     status, _, body = _wsgi_get(app, "/static/missing.css")
     assert body == b"fallback"
+    status, _, body = _wsgi_get(app, "/static/test.css", method="POST")
+    assert body == b"fallback"
+
+
+def _asgi_request(app, method="GET", path="/test.css", headers=()):
+    scope = {"type": "http", "method": method, "path": path, "root_path": "", "headers": list(headers)}
+    sent = []
+
+    async def receive():
+        return {"type": "http.request"}
+
+    async def send(message):
+        sent.append(message)
+
+    asyncio.run(app(scope, receive, send))
+    start = sent[0]
+    body = b"".join(message.get("body", b"") for message in sent[1:])
+    return start["status"], dict(start["headers"]), body
+
+
+def test_asgi_app_serves_css():
+    manager = CobrastyleManager(InMemoryResolver({"test.css": ".a { color: red; }"}), module_pattern="[local]")
+    app = CobrastyleASGIApp(manager)
+
+    status, headers, body = _asgi_request(app)
+    assert status == 200
+    assert body == b".a{color:red}"
+
+    status, _, _ = _asgi_request(app, headers=[(b"if-none-match", headers[b"etag"])])
+    assert status == 304
+
+    status, _, _ = _asgi_request(app, path="/missing.css")
+    assert status == 404
+
+
+def test_asgi_app_rejects_other_methods():
+    manager = CobrastyleManager(InMemoryResolver({"test.css": ".a {}"}))
+    app = CobrastyleASGIApp(manager)
+
+    status, headers, _ = _asgi_request(app, method="POST")
+    assert status == 405
+    assert headers[b"allow"] == b"GET, HEAD"

@@ -53,7 +53,7 @@ def serve(
     resource = get_resource(manager, path)
     if resource is None:
         return None
-    if if_none_match == resource.etag:
+    if _etag_matches(if_none_match, resource.etag):
         return Served(304, [("ETag", resource.etag)], b"")
     headers = [
         ("Content-Type", resource.content_type),
@@ -101,6 +101,16 @@ def get_resource(manager: CobrastyleManager, path: str) -> Resource | None:
     return Resource(data, content_type, f'W/"{digest}"')
 
 
+def _etag_matches(if_none_match: str | None, etag: str) -> bool:
+    """RFC 9110 If-None-Match: a comma-separated list or ``*``, weak-compared (``W/`` ignored)."""
+    if if_none_match is None:
+        return False
+    if if_none_match.strip() == "*":
+        return True
+    opaque = etag.removeprefix("W/")
+    return any(candidate.strip().removeprefix("W/") == opaque for candidate in if_none_match.split(","))
+
+
 def _etag(stylesheet: Stylesheet) -> str:
     if stylesheet.mtime is not None:
         return f'W/"{stylesheet.mtime}-{len(stylesheet.code)}"'
@@ -141,6 +151,11 @@ class CobrastyleASGIApp:
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             raise RuntimeError("CobrastyleASGIApp only handles http scopes")
+        # This app owns its mount point outright, so a wrong method is 405, not 404.
+        if scope["method"] not in ("GET", "HEAD"):
+            headers = [(b"content-type", b"text/plain"), (b"allow", b"GET, HEAD")]
+            await _respond(send, 405, headers, b"Method Not Allowed")
+            return
         # Mounted apps receive the full path with root_path set to the mount point.
         path = scope["path"]
         root_path = scope.get("root_path", "")
