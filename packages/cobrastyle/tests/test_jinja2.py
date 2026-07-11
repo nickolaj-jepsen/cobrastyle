@@ -339,3 +339,60 @@ def test_configure_forwards_compile_options():
     assert "-webkit-user-select" in stylesheet.code
     assert stylesheet.map is None
     assert "\n" not in stylesheet.code.strip()  # minified
+
+
+def test_links_include_the_parents_own_styles_first():
+    """A layout's own stylesheet is linked before the extending child's, so page rules win the cascade."""
+    resources = {"layout.css": ".shell { color: black; }", "page.css": ".title { color: red; }"}
+    templates = {
+        "base.html": '{% cobrastyle base = "layout.css" %}<head>{{ cobrastyle.links() }}</head>'
+        "{% block content %}{% endblock %}",
+        "child.html": '{% extends "base.html" %}{% block content %}'
+        '{% cobrastyle styles = "page.css" %}{{ styles.title }}{% endblock %}',
+    }
+    html = make_environment(resources, templates).get_template("child.html").render()
+
+    assert "layout.css" in html
+    assert "page.css" in html
+    assert html.index("layout.css") < html.index("page.css")
+
+
+def test_links_cover_every_level_of_an_extends_chain():
+    resources = {"grand.css": ".g {}", "mid.css": ".m {}", "page.css": ".p {}"}
+    templates = {
+        "grand.html": '{% cobrastyle g = "grand.css" %}{{ cobrastyle.links() }}{% block a %}{% endblock %}',
+        "mid.html": '{% extends "grand.html" %}{% cobrastyle m = "mid.css" %}'
+        "{% block a %}{{ m.m }}{% block b %}{% endblock %}{% endblock %}",
+        "page.html": '{% extends "mid.html" %}{% block b %}{% cobrastyle p = "page.css" %}{{ p.p }}{% endblock %}',
+    }
+    html = make_environment(resources, templates).get_template("page.html").render()
+
+    assert html.index("grand.css") < html.index("mid.css") < html.index("page.css")
+
+
+def test_custom_delimiters_keep_page_tracking_working():
+    jinja = Environment(
+        loader=DictLoader({}),
+        extensions=[CobrastyleExtension],
+        block_start_string="<%",
+        block_end_string="%>",
+        variable_start_string="<<",
+        variable_end_string=">>",
+    )
+    configure(jinja, resolver=InMemoryResolver({"a.css": ".x { color: red; }"}), module_pattern="[local]")
+
+    html = jinja.from_string('<% cobrastyle s = "a.css" %><< cobrastyle.links() >><< s.x >>').render()
+
+    assert "{% set" not in html  # the injected tracking statement must never leak into output
+    assert html == '<link rel="stylesheet" href="a.css" />x'
+
+
+def test_from_string_recompiles_reuse_one_page_registry_entry():
+    jinja = make_environment({"a.css": ".x {}"}, {})
+    extension = CobrastyleExtension.get(jinja)
+    assert extension is not None
+
+    for _ in range(5):
+        jinja.from_string('{% cobrastyle s = "a.css" %}{{ cobrastyle.links() }}').render()
+
+    assert len(extension._pages) == 1

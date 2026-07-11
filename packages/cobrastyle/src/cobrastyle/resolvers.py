@@ -66,7 +66,7 @@ class FileSystemResolver:
         path = self._path(filename)
         return ResolvedFile(
             url=self.url_prefix + filename,
-            content=path.read_text(),
+            content=path.read_text(encoding="utf-8"),
             mtime=path.stat().st_mtime,
         )
 

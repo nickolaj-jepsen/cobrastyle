@@ -65,6 +65,19 @@ def test_malformed_assets():
         Manifest.from_dict({"version": 1, "modules": {}, "assets": {"icon.svg": {"nope": True}}})
 
 
+@pytest.mark.parametrize("payload", ["[]", "null", '"hi"', "3"])
+def test_non_object_json_is_malformed(tmp_path, payload):
+    (tmp_path / "manifest.json").write_text(payload)
+
+    with pytest.raises(ManifestError, match="Malformed"):
+        Manifest.load(tmp_path / "manifest.json")
+
+
+def test_modules_not_a_mapping_is_malformed():
+    with pytest.raises(ManifestError, match="Malformed"):
+        Manifest.from_dict({"version": 1, "modules": ["a.css"]})
+
+
 def test_round_trip_with_assets(tmp_path):
     manifest = make_manifest()
     manifest.assets["img/icon.svg"] = AssetEntry(file="img/icon.abc.svg", url="/static/img/icon.abc.svg")

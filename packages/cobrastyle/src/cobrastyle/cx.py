@@ -23,6 +23,9 @@ def _collect(out: list[str], value: Any) -> None:
         return
     if isinstance(value, str):
         out.append(value)
+    elif isinstance(value, (bytes, bytearray)):
+        # Iterating would yield integers; treat bytes as UTF-8 text instead
+        out.append(value.decode())
     elif isinstance(value, Mapping):
         out.extend(key if isinstance(key, str) else str(key) for key, active in value.items() if active)
     elif isinstance(value, Iterable):

@@ -490,3 +490,60 @@ def test_mixed_engines_conflicting_template_names_fail(project):
 
     with override_settings(**settings), pytest.raises(CommandError, match="both the Jinja2 and DTL"):
         call_command("cobrastyle_build", verbosity=0)
+
+
+def test_links_include_the_parents_own_styles(project):
+    (project / "styles" / "layout.css").write_text(".shell { color: black; }")
+    (project / "templates" / "base.html").write_text(
+        '{% load cobrastyle %}{% cobrastyle "layout.css" as base %}'
+        "<head>{% cobrastyle_links %}</head><body>{% block content %}{% endblock %}</body>"
+    )
+    (project / "templates" / "child.html").write_text(
+        '{% extends "base.html" %}{% load cobrastyle %}{% block content %}'
+        '{% cobrastyle "page.css" as styles %}<h1 class="{{ styles.title }}">Hi</h1>{% endblock %}'
+    )
+    with override_settings(**project_settings(project)):
+        html = render("child.html")
+
+    assert 'href="/cobrastyle/layout.css"' in html
+    assert 'href="/cobrastyle/page.css"' in html
+    # The layout's own stylesheet links first, so page rules win the cascade
+    assert html.index("layout.css") < html.index("page.css")
+
+
+def test_base_rendered_directly_links_its_styles_once(project):
+    (project / "styles" / "layout.css").write_text(".shell { color: black; }")
+    (project / "templates" / "base.html").write_text(
+        '{% load cobrastyle %}{% cobrastyle "layout.css" as base %}'
+        "<head>{% cobrastyle_links %}</head><body>{% block content %}{% endblock %}</body>"
+    )
+    with override_settings(**project_settings(project)):
+        html = render("base.html")
+
+    assert html.count("layout.css") == 1
+
+
+def test_prod_links_include_the_parents_own_styles_from_manifest(project):
+    (project / "styles" / "layout.css").write_text(".shell { color: black; }")
+    (project / "templates" / "base.html").write_text(
+        '{% load cobrastyle %}{% cobrastyle "layout.css" as base %}'
+        "<head>{% cobrastyle_links %}</head><body>{% block content %}{% endblock %}</body>"
+    )
+    (project / "templates" / "child.html").write_text(
+        '{% extends "base.html" %}{% load cobrastyle %}{% block content %}'
+        '{% cobrastyle "page.css" as styles %}<h1 class="{{ styles.title }}">Hi</h1>{% endblock %}'
+    )
+    with override_settings(**project_settings(project)):
+        call_command("cobrastyle_build", verbosity=0)
+    manifest = Manifest.load(project / "cobrastyle_static" / "cobrastyle" / "manifest.json")
+
+    with override_settings(**project_settings(project, debug=False)):
+        html = render("child.html")
+        # and again from a worker that never parsed the templates: manifest fallback
+        get_runtime().pages.clear()
+        html_fallback = render("child.html")
+
+    for content in (html, html_fallback):
+        assert manifest.modules["layout.css"].url in content
+        assert manifest.modules["page.css"].url in content
+        assert content.index("layout.") < content.index("page.")

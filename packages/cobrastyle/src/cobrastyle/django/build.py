@@ -46,7 +46,7 @@ def collect_dtl(
             try:
                 backend.get_template(name)
             except Exception as exc:
-                handle_compile_failure(name, file.read_text(errors="replace"), exc, strict)
+                handle_compile_failure(name, file.read_text(encoding="utf-8", errors="replace"), exc, strict)
     finally:
         set_runtime(None)
         # Symmetric reset: templates cached now were parsed under the throwaway

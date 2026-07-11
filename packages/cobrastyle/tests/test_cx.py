@@ -16,6 +16,8 @@ from cobrastyle import cx
         (({"a b": True, "c": 0},), "a b"),  # multi-class keys kept verbatim
         ((1, "btn", 0), "1 btn"),  # truthy non-strings str()-ified, falsy dropped
         ((("x", {"y": 1}),), "x y"),
+        ((b"btn", bytearray(b"raw")), "btn raw"),  # bytes decode as text, never iterate as ints
+        ((b"",), ""),
     ],
 )
 def test_cx(args, expected):

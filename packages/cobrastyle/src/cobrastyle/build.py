@@ -100,6 +100,11 @@ def collect_jinja2(
         raise BuildError("CobrastyleExtension is not registered on the environment")
     if build_env.loader is None:
         raise BuildError("The environment has no loader; there are no templates to build")
+    if extended(build_env).cobrastyle_manifest is not None:
+        raise BuildError(
+            "The environment is configured in manifest (prod) mode; the build compiles from source. "
+            "Point the build at a dev-configured target (configure(resolver=...))."
+        )
     # Force a fresh manager compiled with dependency analysis: url()/@import
     # references become placeholders emit() resolves. The build emits
     # production CSS — minified unless told otherwise, never source maps,

@@ -53,9 +53,11 @@ class CobrastyleNode(template.Node):
 def cobrastyle_links(parser: template.base.Parser, token: template.base.Token) -> template.Node:
     """``{% cobrastyle_links %}`` — render <link> tags for the page's stylesheets.
 
-    Collection is per top-level template, so a parent's <head> sees the
-    extending child's stylesheets. Styles imported inside ``{% include %}``d
-    templates are NOT seen; pass their paths explicitly:
+    Covers the template the tag lives in (linked first, so a layout's shared
+    rules lose to page overrides) plus the top-level template of the render —
+    a parent's <head> sees the extending child's stylesheets. Styles imported
+    by ``{% include %}``d templates or by intermediate templates of a longer
+    ``{% extends %}`` chain are NOT seen; pass their paths explicitly:
     ``{% cobrastyle_links "shared/nav.css" %}``.
     """
     extra = tuple(_constant_path(bit, "cobrastyle_links") for bit in token.split_contents()[1:])
@@ -68,9 +70,10 @@ class LinksNode(template.Node):
 
     def render(self, context: template.Context) -> SafeString:
         runtime = get_runtime()
-        origin = getattr(getattr(context, "template", None), "origin", None)
-        paths = list(self.extra)
-        for path in runtime.page_modules(origin):
+        top_origin = getattr(getattr(context, "template", None), "origin", None)
+        # self.origin is stamped by the parser: the template this tag lives in
+        paths = runtime.page_modules(getattr(self, "origin", None))
+        for path in (*runtime.page_modules(top_origin), *self.extra):
             if path not in paths:
                 paths.append(path)
         return mark_safe("".join(f'<link rel="stylesheet" href="{escape(runtime.url_for(path))}" />' for path in paths))

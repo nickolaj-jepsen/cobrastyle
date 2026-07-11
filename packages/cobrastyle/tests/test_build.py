@@ -287,3 +287,18 @@ def test_manifest_json_is_valid_schema(project):
     data = json.loads((out / "manifest.json").read_text())
     assert data["version"] == 1
     assert set(data) == {"version", "generator", "modules", "assets", "pages"}
+
+
+def test_build_rejects_manifest_configured_environment(tmp_path):
+    environment = Environment(
+        loader=DictLoader({"index.html": '{% cobrastyle styles = "page.css" %}{{ styles.title }}'}),
+        extensions=[CobrastyleExtension],
+    )
+    manifest = Manifest.from_dict(
+        {"version": 1, "modules": {"page.css": {"file": "page.x.css", "url": "/static/page.x.css", "classes": {}}}}
+    )
+    configure(environment, manifest=manifest)
+
+    # Nothing compiles in manifest mode; silently emitting a module-less manifest would break prod
+    with pytest.raises(BuildError, match="manifest"):
+        build(environment, output_dir=tmp_path / "out")

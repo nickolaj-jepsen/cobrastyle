@@ -42,6 +42,8 @@ class Manifest:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Manifest:
+        if not isinstance(data, dict):
+            raise ManifestError(f"Malformed manifest: expected a JSON object, got {type(data).__name__}")
         version = data.get("version")
         if version != MANIFEST_VERSION:
             raise ManifestError(
@@ -56,7 +58,7 @@ class Manifest:
                 assets={path: AssetEntry(**entry) for path, entry in data.get("assets", {}).items()},
                 pages={name: list(paths) for name, paths in data.get("pages", {}).items()},
             )
-        except (KeyError, TypeError) as exc:
+        except (KeyError, TypeError, AttributeError) as exc:
             raise ManifestError(f"Malformed manifest: {exc}") from exc
 
     def to_dict(self) -> dict[str, Any]:
@@ -71,7 +73,7 @@ class Manifest:
     @classmethod
     def load(cls, path: str | Path) -> Manifest:
         try:
-            data = json.loads(Path(path).read_text())
+            data = json.loads(Path(path).read_text(encoding="utf-8"))
         except FileNotFoundError as exc:
             raise ManifestError(f"Manifest not found at {path}; did you run `cobrastyle build`?") from exc
         except json.JSONDecodeError as exc:
@@ -80,4 +82,4 @@ class Manifest:
 
     def dump(self, path: str | Path) -> None:
         """Write the manifest as deterministic, diff-friendly JSON."""
-        Path(path).write_text(json.dumps(self.to_dict(), indent=2) + "\n")
+        Path(path).write_text(json.dumps(self.to_dict(), indent=2) + "\n", encoding="utf-8")

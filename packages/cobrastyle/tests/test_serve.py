@@ -249,3 +249,20 @@ def test_asgi_app_rejects_non_http_scopes():
 
     with pytest.raises(RuntimeError, match="http"):
         asyncio.run(app({"type": "websocket"}, receive, send))
+
+
+def test_wsgi_middleware_never_serves_outside_the_resolver_root(tmp_path):
+    (tmp_path / "styles").mkdir()
+    (tmp_path / "styles" / "page.css").write_text(".a { color: red; }")
+    (tmp_path / "secret.txt").write_text("s3cr3t")
+    manager = CobrastyleManager(FileSystemResolver(tmp_path / "styles"))
+
+    def fallback(environ, start_response):
+        start_response("404 Not Found", [])
+        return [b"fallthrough"]
+
+    app = CobrastyleWSGIMiddleware(fallback, manager, url_prefix="/static/")
+
+    for path in ("/static/../secret.txt", "/static/../secret.css", "/static//secret.txt"):
+        _, _, body = _wsgi_get(app, path)
+        assert b"s3cr3t" not in body

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import threading
-from itertools import count
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Self, TypedDict, cast, overload
 
@@ -181,7 +181,6 @@ class CobrastyleExtension(Extension):
         self._binding_recorder: Callable[[nodes.Node, str, dict[str, str]], None] | None = None
         # Module paths statically imported by each compiled template
         self._pages: dict[str, list[str]] = {}
-        self._anonymous_ids = count()
         self._compiling = _CompileState()
 
     @classmethod
@@ -221,14 +220,20 @@ class CobrastyleExtension(Extension):
         self._compiling.page_id = None
         if "cobrastyle" not in source:
             return source
-        page_id = name if name is not None else f"<anonymous-{next(self._anonymous_ids)}>"
+        # Source-hashed, not a counter, so recompiling the same string (from_string
+        # in a loop) reuses one registry entry instead of growing _pages forever
+        page_id = name if name is not None else f"<anonymous-{hashlib.sha256(source.encode()).hexdigest()[:12]}>"
         self._pages[page_id] = []
         self._compiling.page_id = page_id
         # Prepended without a newline so template line numbers stay intact. The
         # top-level set runs at render start — before any parent template renders —
         # which lets {{ cobrastyle.links() }} in an inherited <head> see this
         # template's stylesheets.
-        return f"{{% set __cobrastyle__ = {_PAGE_GLOBAL}({json.dumps(page_id)}) %}}{source}"
+        environment = self.environment
+        return (
+            f"{environment.block_start_string} set __cobrastyle__ = "
+            f"{_PAGE_GLOBAL}({json.dumps(page_id)}) {environment.block_end_string}{source}"
+        )
 
     def parse(self, parser: Parser) -> nodes.Node:
         lineno = next(parser.stream).lineno
