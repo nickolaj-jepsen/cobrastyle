@@ -168,6 +168,7 @@ name = "cobrastyle-lightningcss"
 version = "0.0.0"
 dependencies = [
  "lightningcss",
+ "parcel_sourcemap",
  "pyo3",
 ]
 
