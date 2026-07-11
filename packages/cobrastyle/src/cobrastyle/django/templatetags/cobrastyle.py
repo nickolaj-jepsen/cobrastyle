@@ -1,8 +1,10 @@
 from django import template
 from django.template import TemplateSyntaxError
-from django.utils.html import escape
+from django.template.base import FilterExpression
+from django.utils.html import conditional_escape, escape
 from django.utils.safestring import SafeString, mark_safe
 
+from cobrastyle.cx import cx
 from cobrastyle.django.runtime import get_runtime
 from cobrastyle.paths import normalize_path
 
@@ -71,3 +73,58 @@ class LinksNode(template.Node):
             if path not in paths:
                 paths.append(path)
         return mark_safe("".join(f'<link rel="stylesheet" href="{escape(runtime.url_for(path))}" />' for path in paths))
+
+
+# (value, condition, else-value)
+_CxTerm = tuple[FilterExpression, "FilterExpression | None", "FilterExpression | None"]
+
+
+@register.tag("cx")
+def cx_tag(parser: template.base.Parser, token: template.base.Token) -> template.Node:
+    """``{% cx a b if cond c if cond else d %}`` — join class names conditionally, clsx-style.
+
+    Each space-separated term is a value, ``value if cond``, or ``value if cond
+    else other``; falsy terms drop out. Values resolve with full
+    :func:`cobrastyle.cx.cx` semantics, and the joined result is HTML-escaped
+    and rendered inline.
+    """
+    bits = token.split_contents()[1:]
+    if not bits:
+        raise TemplateSyntaxError("cx expects at least one class term")
+    terms: list[_CxTerm] = []
+    i = 0
+    while i < len(bits):
+        value = parser.compile_filter(bits[i])
+        condition = alternative = None
+        i += 1
+        if i < len(bits) and bits[i] == "if":
+            i += 1
+            if i >= len(bits):
+                raise TemplateSyntaxError("cx: 'if' must be followed by a condition")
+            condition = parser.compile_filter(bits[i])
+            i += 1
+            if i < len(bits) and bits[i] == "else":
+                i += 1
+                if i >= len(bits):
+                    raise TemplateSyntaxError("cx: 'else' must be followed by a value")
+                alternative = parser.compile_filter(bits[i])
+                i += 1
+        terms.append((value, condition, alternative))
+    return CxNode(terms)
+
+
+class CxNode(template.Node):
+    def __init__(self, terms: list[_CxTerm]):
+        self.terms = terms
+
+    def render(self, context: template.Context) -> SafeString:
+        parts: list[str] = []
+        for value, condition, alternative in self.terms:
+            if condition is not None and not condition.resolve(context):
+                resolved = alternative.resolve(context) if alternative is not None else None
+            else:
+                resolved = value.resolve(context)
+            rendered = cx(resolved)
+            if rendered:
+                parts.append(conditional_escape(rendered))
+        return mark_safe(" ".join(parts))

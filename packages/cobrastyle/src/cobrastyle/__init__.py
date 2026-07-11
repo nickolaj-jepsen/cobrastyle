@@ -1,5 +1,6 @@
 from typing import TYPE_CHECKING
 
+from cobrastyle.cx import cx
 from cobrastyle.resolvers import FileResolver, FileSystemResolver, InMemoryResolver, ResolvedFile
 
 if TYPE_CHECKING:
@@ -12,6 +13,7 @@ __all__ = [
     "InMemoryResolver",
     "ResolvedFile",
     "Stylesheet",
+    "cx",
 ]
 
 

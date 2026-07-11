@@ -13,3 +13,7 @@
   composes: button from "./base.css";
   font-weight: 600;
 }
+
+.featured {
+  box-shadow: 0 0 0 3px #6ee7b7;
+}

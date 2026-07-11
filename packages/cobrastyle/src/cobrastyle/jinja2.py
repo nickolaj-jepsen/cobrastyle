@@ -12,6 +12,7 @@ from jinja2.parser import Parser
 from jinja2.runtime import Context
 from markupsafe import Markup
 
+from cobrastyle.cx import cx
 from cobrastyle.manifest import Manifest, ModuleEntry
 from cobrastyle.paths import normalize_path
 from cobrastyle.resolvers import FileResolver
@@ -173,6 +174,7 @@ class CobrastyleExtension(Extension):
             cobrastyle_source_map=True,
         )
         extended(environment).globals["cobrastyle"] = CobrastyleRuntime(self)
+        extended(environment).globals.setdefault("cx", cx)
         extended(environment).globals[_PAGE_GLOBAL] = self._enter_page
         self._manager: CobrastyleManager | None = None
         # Module paths statically imported by each compiled template

@@ -6,4 +6,4 @@ def index(request):
 
 
 def about(request):
-    return render(request, "about.html")  # found in the DTL backend's dirs
+    return render(request, "about.html", {"emphasis": True})  # found in the DTL backend's dirs

@@ -302,3 +302,21 @@ def test_unknown_stylesheet():
     jinja = make_environment({})
     with pytest.raises(KeyError):
         jinja.from_string('{% cobrastyle styles = "missing.css" %}')
+
+
+def test_cx_global():
+    result = render_jinja(
+        """
+    {% cobrastyle styles = "test.css" %}
+    {{ cx(styles.header, {styles.footer: True, "hidden": False}) }}
+    """,
+        {"test.css": ".header { color: red; } .footer { color: blue; }"},
+    )
+    assert result == "header footer"
+
+
+def test_cx_autoescaped():
+    jinja = Environment(loader=DictLoader({}), extensions=[CobrastyleExtension], autoescape=True)
+    configure(jinja, resolver=InMemoryResolver({}))
+    result = jinja.from_string("{{ cx(evil) }}").render(evil='a" onload="x')
+    assert result == "a&#34; onload=&#34;x"

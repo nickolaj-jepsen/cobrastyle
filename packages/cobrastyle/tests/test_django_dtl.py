@@ -241,3 +241,43 @@ def test_prod_render_uses_hashed_classes(project):
         html = render("index.html")
 
     assert re.search(f'class="{class_name}"', html)
+
+
+_CX_TEMPLATES = {
+    "TEMPLATES": [
+        {
+            "BACKEND": "django.template.backends.django.DjangoTemplates",
+            "DIRS": [],
+            "APP_DIRS": False,
+            "OPTIONS": {},
+        }
+    ]
+}
+
+
+def _render_cx(source, context=None):
+    with override_settings(**_CX_TEMPLATES):
+        return engines["django"].from_string("{% load cobrastyle %}" + source).render(context or {})
+
+
+def test_cx_tag_conditionals():
+    out = _render_cx(
+        "{% cx 'btn' 'active' if on 'lg' if big else 'sm' %}",
+        {"on": True, "big": False},
+    )
+    assert out == "btn active sm"
+
+
+def test_cx_tag_drops_falsy_and_supports_maps():
+    out = _render_cx("{% cx base extra flags %}", {"base": "btn", "extra": "", "flags": {"a": True, "b": False}})
+    assert out == "btn a"
+
+
+def test_cx_tag_escapes_unsafe_values():
+    out = _render_cx("{% cx evil %}", {"evil": 'a" onload="x'})
+    assert out == "a&quot; onload=&quot;x"
+
+
+def test_cx_tag_requires_a_term():
+    with pytest.raises(TemplateSyntaxError):
+        _render_cx("{% cx %}")
