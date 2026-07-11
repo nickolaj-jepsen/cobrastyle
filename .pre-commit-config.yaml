@@ -18,3 +18,9 @@ repos:
         language: system
         types: [rust]
         pass_filenames: false
+      - id: versions-check
+        name: versions in lockstep
+        entry: python3 scripts/versions.py check
+        language: system
+        files: ^packages/.*/(pyproject\.toml|Cargo\.toml|Cargo\.lock)$
+        pass_filenames: false

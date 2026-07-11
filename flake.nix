@@ -27,10 +27,15 @@
             pkgs.uv
             pkgs.just
             pkgs.prek
+            pkgs.watchexec
           ];
           RUST_SRC_PATH = "${rust}/lib/rustlib/src/rust/library";
+          # Local rebuilds of the extension use the dev profile (fast compile);
+          # CI and published wheels build release.
+          MATURIN_PEP517_ARGS = "--profile dev";
           shellHook = ''
-            uv sync -q
+            uv sync -q --all-packages
+            prek install > /dev/null
           '';
         };
       });

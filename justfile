@@ -8,7 +8,7 @@ default:
 sync:
     uv sync --all-packages
 
-# Force-rebuild the Rust extension into the virtualenv
+# Force-rebuild the Rust extension (escape hatch; `sync` already rebuilds on Rust changes)
 develop:
     uv sync --all-packages --reinstall-package cobrastyle-lightningcss
 
@@ -16,8 +16,12 @@ develop:
 test *args: sync
     uv run pytest {{ args }}
 
+# Re-run the test suite whenever source files change
+watch *args:
+    watchexec --clear -e py,rs,css,html,toml -- just test {{ args }}
+
 # Lint Python and Rust without modifying anything
-lint:
+lint: sync
     uv run ruff check .
     uv run ruff format --check .
     uv run python scripts/versions.py check

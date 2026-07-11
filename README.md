@@ -155,14 +155,24 @@ byte-identical output.
 
 ## Development
 
-The dev environment is managed with [Nix](https://nixos.org/) (`nix develop`) and
-[uv](https://docs.astral.sh/uv/). Common tasks are wrapped in a [justfile](./justfile):
+The dev environment is managed with [Nix](https://nixos.org/): `nix develop` provides the
+Rust toolchain, Python, [uv](https://docs.astral.sh/uv/), just, and watchexec, syncs the
+virtualenv, and installs the git hooks. Without Nix, install uv and
+[just](https://github.com/casey/just) yourself; rustup picks the toolchain from
+`rust-toolchain.toml`.
+
+Common tasks are wrapped in a [justfile](./justfile):
 
 ```sh
 just sync       # set up the virtualenv (builds the Rust extension)
 just test       # run the test suite
+just watch      # re-run tests on file changes
 just lint       # ruff + rustfmt + clippy
 just typecheck  # pyrefly
 just fmt        # auto-format everything
 just check      # everything CI runs
+just example flask dev   # run an example app (flask|fastapi|django, dev|prod)
 ```
+
+Editing Rust sources is covered by `just sync`/`just test` — uv rebuilds the extension
+whenever they change.

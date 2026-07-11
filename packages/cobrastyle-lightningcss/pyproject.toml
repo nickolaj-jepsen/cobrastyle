@@ -16,3 +16,15 @@ build-backend = "maturin"
 
 [tool.maturin]
 features = ["pyo3/extension-module"]
+
+# Rebuild on `uv sync` when the Rust sources change, not just pyproject.toml.
+[tool.uv]
+cache-keys = [
+    { file = "pyproject.toml" },
+    { file = "Cargo.toml" },
+    { file = "Cargo.lock" },
+    { file = "build.rs" },
+    { file = "src/**/*.rs" },
+    { file = "cobrastyle_lightningcss.pyi" },
+    { env = "MATURIN_PEP517_ARGS" },
+]

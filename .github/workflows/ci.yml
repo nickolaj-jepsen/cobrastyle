@@ -20,13 +20,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: packages/cobrastyle-lightningcss
-      - run: uv sync --all-packages
-      - run: uv run ruff check .
-      - run: uv run ruff format --check .
-      - run: uv run pyrefly check
-      - run: uv run python scripts/versions.py check
-      - run: cargo fmt --manifest-path packages/cobrastyle-lightningcss/Cargo.toml -- --check
-      - run: cargo clippy --manifest-path packages/cobrastyle-lightningcss/Cargo.toml --all-targets -- -D warnings
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+      - run: just lint
+      - run: just typecheck
 
   test:
     runs-on: ${{ matrix.os }}
@@ -51,8 +49,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: packages/cobrastyle-lightningcss
-      - run: uv sync --all-packages
-      - run: uv run pytest
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+      - run: just test
 
   wheels:
     runs-on: ${{ matrix.os }}
