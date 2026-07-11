@@ -4,8 +4,10 @@
 # Python
 .venv/
 __pycache__/
+dist/
 packages/*/dist/
 .pytest_cache/
+.ruff_cache/
 
 # Rust
 packages/*/target/

@@ -1,13 +1,32 @@
 from textwrap import dedent
 
-from cobrastyle_core.file_resolver import InMemoryResolver
-from cobrastyle_jinja2.ext import CobrastyleExtension
-from jinja2 import DictLoader, Environment
+import pytest
+from jinja2 import DictLoader, Environment, TemplateSyntaxError
+
+from cobrastyle import InMemoryResolver
+from cobrastyle.jinja2 import CobrastyleExtension, configure
 
 
 def _clean(template: str) -> str:
     # dedent + remove empty lines
     return "\n".join(line for line in dedent(template).splitlines() if line.strip()).strip()
+
+
+def make_environment(
+    resources: dict[str, str] | None = None,
+    templates: dict[str, str] | None = None,
+    rewrite_class_names: bool = True,
+    **kwargs,
+) -> Environment:
+    jinja = Environment(loader=DictLoader(templates or {}), extensions=[CobrastyleExtension], **kwargs)
+    configure(
+        jinja,
+        resolver=InMemoryResolver(resources or {}),
+        minify=False,
+        module_pattern="[local]",
+        rewrite_class_names=rewrite_class_names,
+    )
+    return jinja
 
 
 def render_jinja(
@@ -17,12 +36,7 @@ def render_jinja(
     rewrite_class_names: bool = True,
     **kwargs,
 ) -> str:
-    loader = DictLoader(templates or {})
-    jinja = Environment(loader=loader, extensions=[CobrastyleExtension], **kwargs)
-    jinja.cobrastyle_minify = False
-    jinja.cobrastyle_module_pattern = "[local]"
-    jinja.cobrastyle_resolver = InMemoryResolver(resources or {})
-    jinja.cobrastyle_rewrite_class_names = rewrite_class_names
+    jinja = make_environment(resources, templates, rewrite_class_names, **kwargs)
     return _clean(jinja.from_string(template).render())
 
 
@@ -36,9 +50,7 @@ def test_simple():
         resources,
     )
 
-    assert result == _clean("""
-    header
-    """)
+    assert result == "header"
 
 
 def test_multiple():
@@ -93,7 +105,20 @@ def test_disabled_class_name_rewrite():
     """)
 
 
-def test_context():
+def test_composes():
+    resources = {"test.css": ".base { color: black; } .button { composes: base; background: red; }"}
+    result = render_jinja(
+        """
+    {% cobrastyle styles = "test.css"  %}
+    {{ styles.button }}
+    """,
+        resources,
+    )
+
+    assert result == "button base"
+
+
+def test_links():
     resources = {"test.css": ".header { color: red; }"}
     result = render_jinja(
         """
@@ -124,7 +149,7 @@ def test_context():
     )
 
 
-def test_context_multiple():
+def test_links_multiple():
     resources = {
         "test.css": ".header { color: red; }",
         "test2.css": ".footer { color: blue; }",
@@ -161,30 +186,24 @@ def test_context_multiple():
     )
 
 
-def test_context_idempotent():
-    jinja = Environment(extensions=[CobrastyleExtension])
-    jinja.cobrastyle_minify = False
-    jinja.cobrastyle_module_pattern = "[local]"
-    jinja.cobrastyle_resolver = InMemoryResolver({"test.css": ".header { color: red; }"})
+def test_links_idempotent():
+    jinja = make_environment({"test.css": ".header { color: red; }"})
+    template = jinja.from_string(
+        """
+    <html>
+        <head>
+            {{ cobrastyle.links() }}
+        </head>
+        <body>
+            {% cobrastyle styles = "test.css"  %}
+            <h1 class="{{ styles.header }}">Hello World</h1>
+        </body>
+    </html>
+    """,
+    )
 
     for _ in range(10):
-        result = _clean(
-            jinja.from_string(
-                """
-        <html>
-            <head>
-                {{ cobrastyle.links() }}
-            </head>
-            <body>
-                {% cobrastyle styles = "test.css"  %}
-                <h1 class="{{ styles.header }}">Hello World</h1>
-            </body>
-        </html>
-        """,
-            ).render()
-        )
-
-        assert result == _clean(
+        assert _clean(template.render()) == _clean(
             """
         <html>
             <head>
@@ -198,7 +217,26 @@ def test_context_idempotent():
         )
 
 
-def test_context_nested_templates():
+def test_links_are_per_render():
+    """Two pages in the same environment only link their own stylesheets."""
+    resources = {
+        "one.css": ".one { color: red; }",
+        "two.css": ".two { color: blue; }",
+    }
+    templates = {
+        "one.html": '{% cobrastyle styles = "one.css" %}{{ cobrastyle.links() }}',
+        "two.html": '{% cobrastyle styles = "two.css" %}{{ cobrastyle.links() }}',
+    }
+    jinja = make_environment(resources, templates)
+
+    assert jinja.get_template("one.html").render() == '<link rel="stylesheet" href="one.css" />'
+    assert jinja.get_template("two.html").render() == '<link rel="stylesheet" href="two.css" />'
+    # And again, to make sure cached templates behave the same
+    assert jinja.get_template("one.html").render() == '<link rel="stylesheet" href="one.css" />'
+
+
+def test_links_with_inherited_head():
+    """A child's stylesheets show up in links() rendered by the parent's <head>."""
     resources = {
         "test.css": ".header { color: red; }",
     }
@@ -235,3 +273,21 @@ def test_context_nested_templates():
         </body>
     </html>
     """)
+
+
+def test_dynamic_path_is_rejected():
+    jinja = make_environment({"test.css": ".a {}"})
+    with pytest.raises(TemplateSyntaxError, match="constant string"):
+        jinja.from_string('{% cobrastyle styles = "test" + ".css" %}')
+
+
+def test_missing_resolver():
+    jinja = Environment(extensions=[CobrastyleExtension])
+    with pytest.raises(RuntimeError, match="resolver"):
+        jinja.from_string('{% cobrastyle styles = "test.css" %}')
+
+
+def test_unknown_stylesheet():
+    jinja = make_environment({})
+    with pytest.raises(KeyError):
+        jinja.from_string('{% cobrastyle styles = "missing.css" %}')

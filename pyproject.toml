@@ -1,29 +1,42 @@
 [tool.uv.workspace]
 members = ["packages/*"]
 
-[tool.uv]
-dev-dependencies = [
-    "ruff==0.6.2",
-]
-
 [tool.uv.sources]
 cobrastyle-lightningcss = { workspace = true }
-cobrastyle-jinja2 = { workspace = true }
-cobrastyle-core = { workspace = true }
+cobrastyle = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "pytest>=9",
+    "ruff>=0.15",
+    "pyrefly>=1.1",
+    "jinja2>=3.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["packages"]
 
 [tool.ruff]
 line-length = 120
-src = ["src"]
-target-version = "py310"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = [
-    "E", # pycodestyle
-    "F", # Pyflakes
-    "UP", # pyupgrade
-    "B", # flake8-bugbear
+    "E",   # pycodestyle
+    "F",   # Pyflakes
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
     "SIM", # flake8-simplify
-    "I", # isort
-    "PT", # flake8-pytest-style
+    "I",   # isort
+    "PT",  # flake8-pytest-style
+    "C4",  # flake8-comprehensions
+    "RUF", # ruff-specific
 ]
 
+[tool.ruff.lint.isort]
+known-first-party = ["cobrastyle", "cobrastyle_lightningcss"]
+
+[tool.pyrefly]
+project-includes = ["packages"]
+search-path = ["packages/cobrastyle/src"]
+python-version = "3.12"

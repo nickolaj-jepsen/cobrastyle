@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      # rustup picks up rust-toolchain.toml automatically
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/cobrastyle-lightningcss
+      - run: uv sync --all-packages
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run pyrefly check
+      - run: cargo fmt --manifest-path packages/cobrastyle-lightningcss/Cargo.toml -- --check
+      - run: cargo clippy --manifest-path packages/cobrastyle-lightningcss/Cargo.toml --all-targets -- -D warnings
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          python-version: ${{ matrix.python-version }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/cobrastyle-lightningcss
+      - run: uv sync --all-packages
+      - run: uv run pytest
+
+  wheels:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64
+          - os: ubuntu-latest
+            target: aarch64
+          - os: macos-latest
+            target: aarch64
+          - os: windows-latest
+            target: x64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: PyO3/maturin-action@v1
+        with:
+          working-directory: packages/cobrastyle-lightningcss
+          target: ${{ matrix.target }}
+          args: --release --out dist
+          manylinux: auto
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.os }}-${{ matrix.target }}
+          path: packages/cobrastyle-lightningcss/dist
+
+  sdist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: PyO3/maturin-action@v1
+        with:
+          working-directory: packages/cobrastyle-lightningcss
+          command: sdist
+          args: --out dist
+      - uses: astral-sh/setup-uv@v6
+      - run: uv build --package cobrastyle --out-dir dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: |
+            packages/cobrastyle-lightningcss/dist
+            dist

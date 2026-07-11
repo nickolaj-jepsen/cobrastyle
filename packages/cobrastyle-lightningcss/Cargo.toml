@@ -1,13 +1,23 @@
 [package]
 name = "cobrastyle-lightningcss"
 version = "0.0.0"
-edition = "2021"
+edition = "2024"
+rust-version = "1.85"
+license = "GPL-3.0-only"
+repository = "https://github.com/nickolaj-jepsen/cobrastyle"
 
 [lib]
 name = "cobrastyle_lightningcss"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = { version = "0.22.2", features = ["abi3-py310"] }
-browserslist-rs = "0.16.0"
-lightningcss = { version = "1.0.0-alpha.58", features = ["browserslist"] }
+pyo3 = { version = "0.29.0", features = ["abi3-py312"] }
+lightningcss = { version = "1.0.0-alpha.71", features = ["browserslist"] }
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = "symbols"

@@ -1,0 +1,22 @@
+[project]
+name = "cobrastyle"
+version = "0.0.0.dev1"
+description = "CSS modules for Python template engines"
+readme = "README.md"
+license = "GPL-3.0-only"
+requires-python = ">=3.12"
+dependencies = [
+    "cobrastyle-lightningcss",
+]
+
+[project.optional-dependencies]
+jinja2 = [
+    "jinja2>=3.1",
+]
+
+[project.urls]
+Repository = "https://github.com/nickolaj-jepsen/cobrastyle"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
