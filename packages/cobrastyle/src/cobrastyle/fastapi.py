@@ -1,24 +1,58 @@
 from pathlib import Path
-from typing import Any
+from typing import Protocol, Unpack, overload
 
 from jinja2 import Environment
 
-from cobrastyle.jinja2 import CobrastyleExtension, configure
+from cobrastyle.jinja2 import CobrastyleExtension, ConfigureOptions, configure
 from cobrastyle.manifest import Manifest
-from cobrastyle.resolvers import FileResolver, FileSystemResolver
+from cobrastyle.resolvers import FileResolver, FileSystemResolver, HasUrlPrefix
 from cobrastyle.serve import CobrastyleASGIApp
 
 
+class SupportsMount(Protocol):
+    """The slice of Starlette/FastAPI :func:`install` needs — no starlette import required."""
+
+    def mount(self, path: str, app: CobrastyleASGIApp) -> None: ...
+
+
+@overload
 def install(
-    target: Any,
-    app: Any = None,
+    target: object,
+    app: SupportsMount | None = None,
+    *,
+    resolver: FileResolver,
+    url_prefix: str = ...,
+    serve: bool = ...,
+    **options: Unpack[ConfigureOptions],
+) -> None: ...
+@overload
+def install(
+    target: object,
+    app: SupportsMount | None = None,
+    *,
+    root: str | Path,
+    url_prefix: str = ...,
+    serve: bool = ...,
+    **options: Unpack[ConfigureOptions],
+) -> None: ...
+@overload
+def install(
+    target: object,
+    app: SupportsMount | None = None,
+    *,
+    manifest: Manifest | str | Path,
+    **options: Unpack[ConfigureOptions],
+) -> None: ...
+def install(
+    target: object,
+    app: SupportsMount | None = None,
     *,
     resolver: FileResolver | None = None,
     manifest: Manifest | str | Path | None = None,
     root: str | Path | None = None,
     url_prefix: str = "/cobrastyle/",
     serve: bool = True,
-    **options: Any,
+    **options: Unpack[ConfigureOptions],
 ) -> None:
     """Wire cobrastyle into a Starlette/FastAPI ``Jinja2Templates`` (or bare Environment).
 
@@ -47,5 +81,5 @@ def install(
     if app is not None and serve:
         extension = CobrastyleExtension.get(environment)
         assert extension is not None  # add_extension above guarantees it
-        prefix = getattr(resolver, "url_prefix", url_prefix).rstrip("/")
+        prefix = (resolver.url_prefix if isinstance(resolver, HasUrlPrefix) else url_prefix).rstrip("/")
         app.mount(prefix, CobrastyleASGIApp(extension.manager))

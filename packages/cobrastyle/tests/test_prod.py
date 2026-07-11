@@ -1,5 +1,6 @@
 import re
 import sys
+from typing import Any, cast
 
 import pytest
 from jinja2 import Environment, FileSystemLoader, TemplateSyntaxError
@@ -96,11 +97,12 @@ def test_prod_links_survive_worker_that_never_compiled(built_project):
 
 def test_configure_requires_exactly_one_mode(built_project):
     environment = Environment(extensions=[CobrastyleExtension])
+    untyped_configure = cast(Any, configure)  # the overloads make these calls unwritable in typed code
 
     with pytest.raises(TypeError, match="exactly one"):
-        configure(environment)
+        untyped_configure(environment)
     with pytest.raises(TypeError, match="exactly one"):
-        configure(
+        untyped_configure(
             environment,
             resolver=FileSystemResolver(built_project / "styles"),
             manifest=built_project / "dist" / "manifest.json",

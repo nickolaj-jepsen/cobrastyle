@@ -3,7 +3,6 @@ from __future__ import annotations
 import importlib
 import sys
 from pathlib import Path
-from typing import Any
 
 import click
 from jinja2 import Environment
@@ -12,7 +11,7 @@ from cobrastyle.build import DEFAULT_GLOBS, BuildError
 from cobrastyle.build import build as run_build
 
 
-def adapt_target(obj: Any) -> Environment:
+def adapt_target(obj: object) -> Environment:
     """Extract a jinja2 Environment from ``obj``.
 
     Accepts a bare Environment, a Flask app (``.jinja_env``), a Starlette/
@@ -38,7 +37,7 @@ def adapt_target(obj: Any) -> Environment:
     )
 
 
-def _extract_environment(obj: Any) -> Environment | None:
+def _extract_environment(obj: object) -> Environment | None:
     if isinstance(obj, Environment):
         return obj
     for attribute in ("jinja_env", "env"):
@@ -48,13 +47,13 @@ def _extract_environment(obj: Any) -> Environment | None:
     return None
 
 
-def import_target(spec: str) -> Any:
+def import_target(spec: str) -> object:
     """Import ``package.module:attribute`` (attribute may be dotted)."""
     module_name, sep, attribute_path = spec.partition(":")
     if not sep or not module_name or not attribute_path:
         raise click.UsageError(f"Target must look like 'package.module:attribute', got {spec!r}")
     try:
-        obj: Any = importlib.import_module(module_name)
+        obj: object = importlib.import_module(module_name)
     except ImportError as exc:
         raise click.ClickException(f"Cannot import module {module_name!r}: {exc}") from exc
     for part in attribute_path.split("."):

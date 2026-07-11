@@ -1,12 +1,22 @@
 from pathlib import Path
-from typing import Any
+from typing import TypedDict, Unpack
 
 from flask import Flask, Response, abort, request
 
-from cobrastyle.jinja2 import CobrastyleExtension, configure
+from cobrastyle.jinja2 import CobrastyleExtension, ConfigureOptions, configure
 from cobrastyle.manifest import Manifest
-from cobrastyle.resolvers import FileResolver, FileSystemResolver
+from cobrastyle.resolvers import FileResolver, FileSystemResolver, HasUrlPrefix
 from cobrastyle.serve import serve
+
+
+class CobrastyleOptions(ConfigureOptions, TypedDict, total=False):
+    """Every keyword :class:`Cobrastyle` accepts, for :func:`init_app`."""
+
+    resolver: FileResolver | None
+    manifest: Manifest | str | Path | None
+    root: str | Path | None
+    url_prefix: str
+    serve: bool
 
 
 class Cobrastyle:
@@ -30,7 +40,7 @@ class Cobrastyle:
         root: str | Path | None = None,
         url_prefix: str = "/cobrastyle/",
         serve: bool = True,
-        **options: Any,
+        **options: Unpack[ConfigureOptions],
     ) -> None:
         self._resolver = resolver
         self._manifest = manifest
@@ -54,7 +64,7 @@ class Cobrastyle:
             if self._serve:
                 extension = CobrastyleExtension.get(app.jinja_env)
                 assert extension is not None  # add_extension above guarantees it
-                prefix = getattr(resolver, "url_prefix", self._url_prefix)
+                prefix = resolver.url_prefix if isinstance(resolver, HasUrlPrefix) else self._url_prefix
 
                 def serve_css(filename: str) -> Response:
                     result = serve(
@@ -72,6 +82,6 @@ class Cobrastyle:
         app.extensions["cobrastyle"] = self
 
 
-def init_app(app: Flask, **kwargs: Any) -> Cobrastyle:
+def init_app(app: Flask, **kwargs: Unpack[CobrastyleOptions]) -> Cobrastyle:
     """Shorthand for ``Cobrastyle(app, **kwargs)``."""
     return Cobrastyle(app, **kwargs)

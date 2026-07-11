@@ -63,23 +63,21 @@ class Command(BaseCommand):
                 build_env = jinja_env.overlay()
                 build_env.bytecode_cache = None
                 configure(build_env, resolver=resolver, **common_options(config))
-                jinja_pages, jinja_sheets, _ = collect_jinja2(
+                collected = collect_jinja2(
                     build_env,
                     globs=globs,
                     strict=strict,
                     extra_templates=tuple(options["extra_templates"] or ()),
                 )
-                pages.update(jinja_pages)
-                stylesheets.update({sheet.path: sheet for sheet in jinja_sheets})
+                pages.update(collected.pages)
+                stylesheets.update({sheet.path: sheet for sheet in collected.stylesheets})
 
             if dtl_backend is not None:
                 from cobrastyle.django.build import collect_dtl
 
-                dtl_pages, dtl_sheets = collect_dtl(
-                    dtl_backend, resolver, common_options(config), globs=globs, strict=strict
-                )
-                pages.update(dtl_pages)
-                stylesheets.update({sheet.path: sheet for sheet in dtl_sheets})
+                collected = collect_dtl(dtl_backend, resolver, common_options(config), globs=globs, strict=strict)
+                pages.update(collected.pages)
+                stylesheets.update({sheet.path: sheet for sheet in collected.stylesheets})
 
             manifest = emit(list(stylesheets.values()), resolver, pages, output_dir=out, url_prefix=url_prefix)
         except BuildError as exc:

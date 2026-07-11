@@ -1,4 +1,5 @@
 import os
+from typing import Any, cast
 
 import pytest
 
@@ -47,5 +48,6 @@ def test_fastapi_dev_e2e(page_project, extract):
 
 
 def test_install_rejects_non_environment():
+    untyped_install = cast(Any, install)  # the overloads make this call unwritable in typed code
     with pytest.raises(TypeError, match="Environment"):
-        install(object())
+        untyped_install(object())

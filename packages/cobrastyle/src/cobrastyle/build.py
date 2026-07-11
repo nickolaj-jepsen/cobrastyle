@@ -8,7 +8,7 @@ import re
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from jinja2 import Environment
 
@@ -30,6 +30,14 @@ _EXTERNAL_URL = re.compile(r"^(?:[a-z][a-z0-9+.-]*:|//|#)", re.IGNORECASE)
 
 class BuildError(Exception):
     """The build cannot produce a complete, correct manifest."""
+
+
+class CollectedTemplates(NamedTuple):
+    """What a template walk produced, ready for :func:`emit`."""
+
+    pages: dict[str, list[str]]
+    stylesheets: list[Stylesheet]
+    resolver: FileResolver | None
 
 
 def handle_compile_failure(name: str, source: str, exc: Exception, strict: bool) -> None:
@@ -59,10 +67,10 @@ def build(
     :class:`BuildError`. Output is deterministic: identical input produces
     byte-identical files.
     """
-    pages, stylesheets, resolver = collect_jinja2(
-        environment, globs=globs, strict=strict, extra_templates=extra_templates
+    collected = collect_jinja2(environment, globs=globs, strict=strict, extra_templates=extra_templates)
+    return emit(
+        collected.stylesheets, collected.resolver, collected.pages, output_dir=output_dir, url_prefix=url_prefix
     )
-    return emit(stylesheets, resolver, pages, output_dir=output_dir, url_prefix=url_prefix)
 
 
 def collect_jinja2(
@@ -71,8 +79,8 @@ def collect_jinja2(
     globs: tuple[str, ...] = DEFAULT_GLOBS,
     strict: bool = False,
     extra_templates: tuple[str, ...] = (),
-) -> tuple[dict[str, list[str]], list[Stylesheet], FileResolver | None]:
-    """Walk the environment's templates; return (pages, compiled stylesheets, resolver)."""
+) -> CollectedTemplates:
+    """Walk the environment's templates; return the pages, compiled stylesheets, and their resolver."""
     build_env = environment.overlay()
     extension = CobrastyleExtension.get(build_env)
     if extension is None:
@@ -100,8 +108,8 @@ def collect_jinja2(
 
     manager = extension._manager
     if manager is None:
-        return pages, [], None
-    return pages, manager.stylesheets, manager.resolver
+        return CollectedTemplates(pages, [], None)
+    return CollectedTemplates(pages, manager.stylesheets, manager.resolver)
 
 
 def emit(

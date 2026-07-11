@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
@@ -9,15 +9,24 @@ from django.templatetags.static import static
 from django.urls import reverse
 from jinja2 import Environment
 
-from cobrastyle.jinja2 import CobrastyleExtension, configure, extended
+from cobrastyle.jinja2 import CobrastyleExtension, ConfigureOptions, configure, extended
+from cobrastyle.manifest import Manifest
 from cobrastyle.resolvers import FileSystemResolver
 
-_OPTION_KEYS = {
-    "MINIFY": "minify",
-    "REWRITE_CLASS_NAMES": "rewrite_class_names",
-    "MODULE_PATTERN": "module_pattern",
-    "TARGETS": "targets",
-}
+
+class CobrastyleSettings(TypedDict, total=False):
+    """The shape of the ``COBRASTYLE`` settings dict."""
+
+    DEV: bool
+    ROOT: str | Path
+    URL_PREFIX: str
+    MANIFEST: Manifest | str | Path
+    OUTPUT_DIR: str | Path
+    BUILD_URL_PREFIX: str
+    MINIFY: bool
+    REWRITE_CLASS_NAMES: bool
+    MODULE_PATTERN: str | None
+    TARGETS: list[str] | None
 
 
 def environment(**options: Any) -> Environment:
@@ -50,22 +59,31 @@ def configure_from_settings(env: Environment) -> None:
         configure(env, manifest=manifest, **common)
 
 
-def app_config() -> dict[str, Any]:
-    return getattr(settings, "COBRASTYLE", {})
+def app_config() -> CobrastyleSettings:
+    return getattr(settings, "COBRASTYLE", CobrastyleSettings())
 
 
-def common_options(config: dict[str, Any]) -> dict[str, Any]:
-    return {option: config[key] for key, option in _OPTION_KEYS.items() if key in config}
+def common_options(config: CobrastyleSettings) -> ConfigureOptions:
+    options: ConfigureOptions = {}
+    if "MINIFY" in config:
+        options["minify"] = config["MINIFY"]
+    if "REWRITE_CLASS_NAMES" in config:
+        options["rewrite_class_names"] = config["REWRITE_CLASS_NAMES"]
+    if "MODULE_PATTERN" in config:
+        options["module_pattern"] = config["MODULE_PATTERN"]
+    if "TARGETS" in config:
+        options["targets"] = config["TARGETS"]
+    return options
 
 
-def dev_resolver(config: dict[str, Any]) -> FileSystemResolver:
+def dev_resolver(config: CobrastyleSettings) -> FileSystemResolver:
     root = config.get("ROOT")
     if root is None:
         root = _base_dir("COBRASTYLE['ROOT']") / "styles"
     return FileSystemResolver(root, url_prefix=config.get("URL_PREFIX", "/cobrastyle/"))
 
 
-def output_dir(config: dict[str, Any]) -> Path:
+def output_dir(config: CobrastyleSettings) -> Path:
     out = config.get("OUTPUT_DIR")
     if out is None:
         out = _base_dir("COBRASTYLE['OUTPUT_DIR']") / "cobrastyle_static" / "cobrastyle"

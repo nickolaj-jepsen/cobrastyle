@@ -4,7 +4,7 @@ import json
 import threading
 from itertools import count
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Self, cast
+from typing import TYPE_CHECKING, Any, Self, TypedDict, cast, overload
 
 from jinja2 import Environment, TemplateSyntaxError, nodes, pass_context
 from jinja2.ext import Extension
@@ -22,6 +22,15 @@ if TYPE_CHECKING:
 
 _USED_KEY = "_cobrastyle_used"
 _PAGE_GLOBAL = "__cobrastyle_page__"
+
+
+class ConfigureOptions(TypedDict, total=False):
+    """The mode-independent keyword options of :func:`configure`, for adapters that forward them."""
+
+    minify: bool
+    rewrite_class_names: bool
+    module_pattern: str | None
+    targets: list[str] | None
 
 
 class ExtendedEnvironment(Environment):
@@ -43,6 +52,33 @@ def extended(environment: Environment) -> ExtendedEnvironment:
     return cast(ExtendedEnvironment, environment)
 
 
+class _CompileState(threading.local):
+    """The template currently being compiled, per thread."""
+
+    def __init__(self) -> None:
+        self.page_id: str | None = None
+
+
+@overload
+def configure(
+    environment: Environment,
+    *,
+    resolver: FileResolver,
+    minify: bool = ...,
+    rewrite_class_names: bool = ...,
+    module_pattern: str | None = ...,
+    targets: list[str] | None = ...,
+) -> None: ...
+@overload
+def configure(
+    environment: Environment,
+    *,
+    manifest: Manifest | str | Path,
+    minify: bool = ...,
+    rewrite_class_names: bool = ...,
+    module_pattern: str | None = ...,
+    targets: list[str] | None = ...,
+) -> None: ...
 def configure(
     environment: Environment,
     *,
@@ -116,7 +152,7 @@ class CobrastyleExtension(Extension):
         # Module paths statically imported by each compiled template
         self._pages: dict[str, list[str]] = {}
         self._anonymous_ids = count()
-        self._compiling = threading.local()
+        self._compiling = _CompileState()
 
     @classmethod
     def get(cls, environment: Environment) -> Self | None:
@@ -179,7 +215,7 @@ class CobrastyleExtension(Extension):
         path = normalize_path(path_expression.value)
         classes, page_paths = self._resolve_module(path, lineno, parser)
 
-        page_id: str | None = getattr(self._compiling, "page_id", None)
+        page_id = self._compiling.page_id
         if page_id is not None:
             page = self._pages[page_id]
             for page_path in page_paths:

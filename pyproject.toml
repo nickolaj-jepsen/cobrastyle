@@ -36,6 +36,7 @@ select = [
     "I",   # isort
     "PT",  # flake8-pytest-style
     "C4",  # flake8-comprehensions
+    "PGH", # pygrep-hooks (no blanket noqa / type: ignore)
     "RUF", # ruff-specific
 ]
 
@@ -43,6 +44,6 @@ select = [
 known-first-party = ["cobrastyle", "cobrastyle_lightningcss"]
 
 [tool.pyrefly]
-project-includes = ["packages"]
-search-path = ["packages/cobrastyle/src"]
+project-includes = ["packages", "examples"]
+search-path = ["packages/cobrastyle/src", "examples/django"]
 python-version = "3.12"

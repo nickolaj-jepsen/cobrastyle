@@ -1,11 +1,22 @@
 from pathlib import Path
-from typing import NamedTuple, Protocol
+from typing import NamedTuple, Protocol, runtime_checkable
 
 
 class ResolvedFile(NamedTuple):
     url: str
     content: str
     mtime: float | None = None
+
+
+@runtime_checkable
+class HasUrlPrefix(Protocol):
+    """A resolver that knows the URL prefix its stylesheets are served from.
+
+    Optional: framework adapters mount the dev CSS server at this prefix when
+    a resolver provides it, falling back to their own ``url_prefix`` argument.
+    """
+
+    url_prefix: str
 
 
 class FileResolver(Protocol):

@@ -7,6 +7,13 @@ from cobrastyle.resolvers import FileResolver
 from cobrastyle_lightningcss import CssModuleExport, CssModuleReference, Dependency, transform
 
 
+class _VisitingState(threading.local):
+    """The compose-chain paths currently being compiled, per thread (cycle detection)."""
+
+    def __init__(self) -> None:
+        self.paths: set[str] = set()
+
+
 class Stylesheet(NamedTuple):
     path: str
     url: str
@@ -51,7 +58,7 @@ class CobrastyleManager:
         self.analyze_dependencies = analyze_dependencies
         self._cache: dict[str, Stylesheet] = {}
         self._lock = threading.RLock()
-        self._visiting = threading.local()
+        self._visiting = _VisitingState()
 
     def import_module(self, path: str) -> Stylesheet:
         """Resolve, compile and cache the CSS module at ``path``."""
@@ -60,8 +67,7 @@ class CobrastyleManager:
             if (cached := self._cache.get(path)) and cached.mtime == self.resolver.mtime(path):
                 return cached
 
-            visiting: set[str] = getattr(self._visiting, "paths", None) or set()
-            self._visiting.paths = visiting
+            visiting = self._visiting.paths
             if path in visiting:
                 chain = " -> ".join([*sorted(visiting), path])
                 raise ValueError(f"Circular composes chain between CSS modules: {chain}")

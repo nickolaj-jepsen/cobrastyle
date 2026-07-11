@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import fnmatch
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
-from cobrastyle.build import DEFAULT_GLOBS, handle_compile_failure
+from cobrastyle.build import DEFAULT_GLOBS, CollectedTemplates, handle_compile_failure
 from cobrastyle.django.runtime import DTLRuntime, get_runtime, set_runtime
-from cobrastyle.manager import CobrastyleManager, Stylesheet
+from cobrastyle.jinja2 import ConfigureOptions
+from cobrastyle.manager import CobrastyleManager
 from cobrastyle.resolvers import FileResolver
 
 if TYPE_CHECKING:
@@ -17,12 +18,12 @@ if TYPE_CHECKING:
 def collect_dtl(
     backend: DjangoTemplates,
     resolver: FileResolver,
-    manager_options: dict[str, Any],
+    manager_options: ConfigureOptions,
     *,
     globs: tuple[str, ...] = DEFAULT_GLOBS,
     strict: bool = False,
-) -> tuple[dict[str, list[str]], list[Stylesheet]]:
-    """Walk a DjangoTemplates backend's templates; return (pages, compiled stylesheets).
+) -> CollectedTemplates:
+    """Walk a DjangoTemplates backend's templates; return the pages, compiled stylesheets, and their resolver.
 
     Compiling a DTL template fires ``{% cobrastyle %}`` at parse time; a
     temporary dev runtime with dependency analysis collects the modules.
@@ -50,7 +51,7 @@ def collect_dtl(
         for origin_name, paths in runtime.pages.items()
         if paths and origin_name in runtime.page_names
     }
-    return pages, manager.stylesheets
+    return CollectedTemplates(pages, manager.stylesheets, resolver)
 
 
 def _template_files(engine: Engine, globs: tuple[str, ...]) -> list[tuple[str, Path]]:
