@@ -35,6 +35,7 @@ class Command(BaseCommand):
             action="store_true",
             help="First delete previously built files (hashed names and manifest.json; other files survive).",
         )
+        parser.add_argument("--no-minify", action="store_true", help="Emit readable CSS instead of minified.")
 
     def handle(self, *args: Any, **options: Any) -> None:
         jinja_env = None
@@ -57,6 +58,7 @@ class Command(BaseCommand):
         url_prefix = options["url_prefix"] or config.get("BUILD_URL_PREFIX", static_url + "cobrastyle/")
         globs = tuple(options["globs"] or DEFAULT_GLOBS)
         strict = options["strict"]
+        minify = not options["no_minify"]
         resolver = dev_resolver(config)
 
         pages: dict[str, list[str]] = {}
@@ -73,6 +75,7 @@ class Command(BaseCommand):
                     globs=globs,
                     strict=strict,
                     extra_templates=tuple(options["extra_templates"] or ()),
+                    minify=minify,
                 )
                 pages.update(collected.pages)
                 stylesheets.update({sheet.path: sheet for sheet in collected.stylesheets})
@@ -80,7 +83,9 @@ class Command(BaseCommand):
             if dtl_backend is not None:
                 from cobrastyle.django.build import collect_dtl
 
-                collected = collect_dtl(dtl_backend, resolver, common_options(config), globs=globs, strict=strict)
+                collected = collect_dtl(
+                    dtl_backend, resolver, common_options(config), globs=globs, strict=strict, minify=minify
+                )
                 pages.update(collected.pages)
                 stylesheets.update({sheet.path: sheet for sheet in collected.stylesheets})
 

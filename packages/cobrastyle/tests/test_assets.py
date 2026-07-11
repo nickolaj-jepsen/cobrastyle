@@ -178,6 +178,47 @@ def test_build_bundles_imports_between_modules(asset_project):
     assert built.index("color:red") < built.index("color:#00f")
 
 
+def test_build_resolves_urls_against_the_importing_file(asset_project):
+    styles = asset_project / "styles"
+    (styles / "sub").mkdir()
+    (styles / "sub" / "dot.svg").write_bytes(b"<svg>dot</svg>")
+    (styles / "sub" / "icons.css").write_text(".icon { background: url(dot.svg); }")
+    (styles / "button.css").write_text('@import "sub/icons.css"; .button { color: blue; }')
+    out = asset_project / "out"
+
+    manifest = build(make_environment(asset_project), output_dir=out)
+
+    # url(dot.svg) is written in sub/icons.css, so it must resolve inside sub/
+    asset = manifest.assets["sub/dot.svg"]
+    assert (out / asset.file).read_bytes() == b"<svg>dot</svg>"
+    built = (out / manifest.modules["button.css"].file).read_text()
+    assert asset.url in built
+    assert manifest.modules["button.css"].assets == ["sub/dot.svg"]
+
+
+def test_build_keeps_external_imports(asset_project):
+    (asset_project / "styles" / "button.css").write_text(
+        '@import "https://example.com/reset.css"; .button { color: blue; }'
+    )
+    out = asset_project / "out"
+
+    manifest = build(make_environment(asset_project), output_dir=out)
+
+    built = (out / manifest.modules["button.css"].file).read_text()
+    assert '@import "https://example.com/reset.css"' in built
+
+
+def test_build_preserves_import_conditions(asset_project):
+    (asset_project / "styles" / "print.css").write_text(".page { margin: 0; }")
+    (asset_project / "styles" / "button.css").write_text('@import "print.css" print; .button { color: blue; }')
+    out = asset_project / "out"
+
+    manifest = build(make_environment(asset_project), output_dir=out)
+
+    built = (out / manifest.modules["button.css"].file).read_text()
+    assert "@media print" in built
+
+
 def test_dev_serves_raw_assets(asset_project):
     manager = CobrastyleManager(FileSystemResolver(asset_project / "styles"))
 

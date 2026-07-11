@@ -75,6 +75,26 @@ def test_build_is_deterministic(project):
     assert first == second
 
 
+def test_build_minifies_regardless_of_dev_configuration(project):
+    environment = make_environment(project, minify=False)
+    out = project / "out"
+
+    manifest = build(environment, output_dir=out)
+
+    built = (out / manifest.modules["styles/page.css"].file).read_text()
+    assert "color:red" in built
+    assert "sourceMappingURL" not in built
+
+
+def test_build_no_minify(project):
+    out = project / "out"
+
+    manifest = build(make_environment(project), output_dir=out, minify=False)
+
+    built = (out / manifest.modules["styles/page.css"].file).read_text()
+    assert "color: red" in built
+
+
 def test_rebuild_without_clean_accumulates_stale_files(project):
     out = project / "out"
     build(make_environment(project), output_dir=out)

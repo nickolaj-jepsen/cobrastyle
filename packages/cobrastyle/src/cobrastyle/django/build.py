@@ -22,15 +22,16 @@ def collect_dtl(
     *,
     globs: tuple[str, ...] = DEFAULT_GLOBS,
     strict: bool = False,
+    minify: bool = True,
 ) -> CollectedTemplates:
     """Walk a DjangoTemplates backend's templates; return the pages, compiled stylesheets, and their resolver.
 
     Compiling a DTL template fires ``{% cobrastyle %}`` at parse time; a
     temporary dev runtime with dependency analysis collects the modules.
     """
-    # The build always emits production CSS — minified, no source maps —
-    # whatever the dev-serving options say.
-    options: ConfigureOptions = {**manager_options, "minify": True, "source_map": False}
+    # The build emits production CSS — minified unless told otherwise, never
+    # source maps — whatever the dev-serving options say.
+    options: ConfigureOptions = {**manager_options, "minify": minify, "source_map": False}
     manager = CobrastyleManager(resolver, analyze_dependencies=True, **options)
     runtime = DTLRuntime(manager=manager)
     set_runtime(runtime)

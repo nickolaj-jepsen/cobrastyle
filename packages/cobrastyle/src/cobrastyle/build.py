@@ -57,6 +57,7 @@ def build(
     strict: bool = False,
     extra_templates: tuple[str, ...] = (),
     clean: bool = False,
+    minify: bool = True,
 ) -> Manifest:
     """Compile every template's stylesheets and write hashed CSS + ``manifest.json`` to ``output_dir``.
 
@@ -67,9 +68,10 @@ def build(
     unless it mentions cobrastyle or ``strict`` is set — then it's a
     :class:`BuildError`. Output is deterministic: identical input produces
     byte-identical files. ``clean`` removes previously built files first;
-    see :func:`emit`.
+    see :func:`emit`. ``minify`` applies regardless of the environment's
+    dev-serving configuration.
     """
-    collected = collect_jinja2(environment, globs=globs, strict=strict, extra_templates=extra_templates)
+    collected = collect_jinja2(environment, globs=globs, strict=strict, extra_templates=extra_templates, minify=minify)
     return emit(
         collected.stylesheets,
         collected.resolver,
@@ -86,6 +88,7 @@ def collect_jinja2(
     globs: tuple[str, ...] = DEFAULT_GLOBS,
     strict: bool = False,
     extra_templates: tuple[str, ...] = (),
+    minify: bool = True,
 ) -> CollectedTemplates:
     """Walk the environment's templates; return the pages, compiled stylesheets, and their resolver."""
     build_env = environment.overlay()
@@ -95,11 +98,11 @@ def collect_jinja2(
     if build_env.loader is None:
         raise BuildError("The environment has no loader; there are no templates to build")
     # Force a fresh manager compiled with dependency analysis: url()/@import
-    # references become placeholders emit() resolves. The build always emits
-    # production CSS — minified, no source maps — whatever the environment's
-    # dev-serving configuration says.
+    # references become placeholders emit() resolves. The build emits
+    # production CSS — minified unless told otherwise, never source maps —
+    # whatever the environment's dev-serving configuration says.
     extended(build_env).cobrastyle_analyze_dependencies = True
-    extended(build_env).cobrastyle_minify = True
+    extended(build_env).cobrastyle_minify = minify
     extended(build_env).cobrastyle_source_map = False
     extension._manager = None
 
@@ -194,20 +197,23 @@ def _resolve_assets(
     code = stylesheet.code
     module_assets: list[str] = []
     for dependency in stylesheet.dependencies:
-        if not isinstance(dependency, Dependency.Url):
-            url = dependency.url if isinstance(dependency, Dependency.Import) else "?"
-            raise BuildError(
-                f"@import of {url!r} in {stylesheet.path!r} is not supported by the build yet; "
-                "load both stylesheets from the template instead."
-            )
+        if isinstance(dependency, Dependency.Import):
+            if not _EXTERNAL_URL.match(dependency.url):
+                # The bundler inlines every non-external @import before the build sees it
+                raise BuildError(f"Unresolvable @import of {dependency.url!r} in {stylesheet.path!r}")
+            code = code.replace(dependency.placeholder, dependency.url)
+            continue
+        assert isinstance(dependency, Dependency.Url)
         if _EXTERNAL_URL.match(dependency.url):
             code = code.replace(dependency.placeholder, dependency.url)
             continue
 
         bare_url = dependency.url.split("?", 1)[0].split("#", 1)[0]
         extra = dependency.url[len(bare_url) :]
+        # Relative to the file that wrote the url() — with bundled @imports
+        # that is not necessarily the entry module
         try:
-            asset_path = normalize_path(posixpath.join(posixpath.dirname(stylesheet.path), bare_url))
+            asset_path = normalize_path(posixpath.join(posixpath.dirname(dependency.loc.file_path), bare_url))
         except ValueError as exc:
             raise BuildError(f"Asset {dependency.url!r} in {stylesheet.path!r} escapes the resolver root") from exc
 

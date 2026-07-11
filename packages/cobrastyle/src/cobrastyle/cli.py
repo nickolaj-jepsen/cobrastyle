@@ -91,6 +91,7 @@ def cli() -> None:
     is_flag=True,
     help="First delete previously built files (hashed names and manifest.json; other files survive).",
 )
+@click.option("--no-minify", is_flag=True, help="Emit readable CSS instead of minified.")
 def build_command(
     target: str,
     output_dir: Path,
@@ -99,6 +100,7 @@ def build_command(
     extra_templates: tuple[str, ...],
     strict: bool,
     clean: bool,
+    no_minify: bool,
 ) -> None:
     """Build production CSS and manifest for TARGET (package.module:attribute)."""
     if "" not in sys.path and "." not in sys.path:
@@ -113,6 +115,7 @@ def build_command(
             strict=strict,
             extra_templates=extra_templates,
             clean=clean,
+            minify=not no_minify,
         )
     except BuildError as exc:
         raise click.ClickException(str(exc)) from exc
