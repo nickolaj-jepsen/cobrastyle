@@ -177,8 +177,9 @@ def _hashed_name(path: str, data: bytes) -> str:
     return str(source_path.parent / f"{source_path.stem}.{digest}{source_path.suffix}")
 
 
-# What _hashed_name produces; _clean_output must never match anything else
-_HASHED_NAME = re.compile(r"\.[0-9a-f]{10}\.\w+$")
+# What _hashed_name produces — the naming contract consumers (cleanup,
+# cache-header helpers) match against
+HASHED_NAME = re.compile(r"\.[0-9a-f]{10}\.\w+$")
 
 
 def _clean_output(output: Path) -> None:
@@ -188,7 +189,7 @@ def _clean_output(output: Path) -> None:
     # A parent sorts before its children, so the reverse walk empties directories bottom-up
     for path in sorted(output.rglob("*"), reverse=True):
         if path.is_file():
-            if _HASHED_NAME.search(path.name):
+            if HASHED_NAME.search(path.name):
                 path.unlink()
         elif path.is_dir() and not any(path.iterdir()):
             path.rmdir()

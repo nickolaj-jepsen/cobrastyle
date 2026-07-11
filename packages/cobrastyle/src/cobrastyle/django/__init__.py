@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypedDict
 
@@ -113,6 +114,29 @@ def output_dir(config: CobrastyleSettings) -> Path:
     if out is None:
         out = _base_dir("COBRASTYLE['OUTPUT_DIR']") / "cobrastyle_static" / "cobrastyle"
     return Path(out)
+
+
+# ManifestStaticFilesStorage's hashed names — WhiteNoise's storage round-trip
+# already recognizes them, but a custom test replaces it wholesale
+_DJANGO_HASHED_NAME = re.compile(r"\.[0-9a-f]{12}\.")
+
+
+def immutable_file_test(path: str, url: str) -> bool:
+    """``WHITENOISE_IMMUTABLE_FILE_TEST`` hook marking content-hashed files cacheable forever.
+
+    Matches cobrastyle's hashed names under the configured static prefix —
+    needed under plain static storage, where WhiteNoise's default test only
+    recognizes names hashed by the storage itself — plus Django's 12-hex
+    hashed names, so other assets keep their immutable headers too.
+    """
+    from cobrastyle.build import HASHED_NAME
+
+    prefix = static_prefix(app_config())
+    if prefix is not None:
+        static_url = settings.STATIC_URL or "/static/"
+        if url.startswith(static_url + prefix) and HASHED_NAME.search(url):
+            return True
+    return bool(_DJANGO_HASHED_NAME.search(url))
 
 
 def _base_dir(needed_for: str) -> Path:

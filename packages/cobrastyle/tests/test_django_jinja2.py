@@ -161,6 +161,33 @@ def test_prod_urls_resolve_through_hashed_storage(page_project, extract):
         assert not (static_root / "cobrastyle" / "manifest.json").exists()
 
 
+def test_immutable_file_test_recognizes_hashed_names():
+    from cobrastyle.django import immutable_file_test
+
+    # cobrastyle's 10-hex names, only under the configured static prefix
+    assert immutable_file_test("", "/static/cobrastyle/button.0123456789.css")
+    assert immutable_file_test("", "/static/cobrastyle/img/icon.abcdef0123.svg")
+    assert not immutable_file_test("", "/static/cobrastyle/button.css")
+    assert not immutable_file_test("", "/static/app.0123456789.css")
+    # Django's 12-hex hashed names keep their headers anywhere
+    assert immutable_file_test("", "/static/app.0123456789ab.css")
+    assert immutable_file_test("", "/static/cobrastyle/button.0123456789.0123456789ab.css")
+    assert not immutable_file_test("", "/static/app.css")
+
+
+def test_immutable_file_test_follows_the_configured_prefix():
+    from cobrastyle.django import immutable_file_test
+
+    with override_settings(COBRASTYLE={"STATIC_PREFIX": "assets/css"}):
+        assert immutable_file_test("", "/static/assets/css/button.0123456789.css")
+        assert not immutable_file_test("", "/static/cobrastyle/button.0123456789.css")
+
+    with override_settings(COBRASTYLE={"STATIC_PREFIX": None}):
+        # Integration off: only Django-hashed names are immutable
+        assert not immutable_file_test("", "/static/cobrastyle/button.0123456789.css")
+        assert immutable_file_test("", "/static/app.0123456789ab.css")
+
+
 def test_build_url_prefix_opts_out_of_static_mapping(page_project, extract):
     config = {"ROOT": page_project / "styles", "BUILD_URL_PREFIX": "https://cdn.example.com/assets/"}
     with override_settings(**project_settings(page_project, cobrastyle=config)):
