@@ -6,6 +6,9 @@ from cobrastyle.paths import normalize_path
 from cobrastyle.resolvers import FileResolver
 from cobrastyle_lightningcss import CssModuleExport, CssModuleReference, Dependency, bundle
 
+# `button_primary_2x4fBq` reads back to its source in devtools; builds swap in the compact lightningcss default
+DEV_MODULE_PATTERN = "[name]_[local]_[hash]"
+
 
 class _VisitingState(threading.local):
     """The compose-chain paths currently being compiled, per thread (cycle detection)."""
@@ -60,10 +63,11 @@ class CobrastyleManager:
     importer). Cached entries are revalidated against the resolver's
     freshness token (``mtime``) for every file the compile depended on —
     the module itself, its ``@import``s and its ``composes`` targets — so
-    any edit recompiles on the next import. Class names hash the file
-    *path*, not its content — a recompile keeps existing class maps
-    valid; only adding/removing classes requires reloading templates that
-    baked the old map in.
+    any edit recompiles on the next import. Class names default to the
+    readable :data:`DEV_MODULE_PATTERN` (``module_pattern=None``); their
+    ``[hash]`` covers the file *path*, not its content — a recompile
+    keeps existing class maps valid; only adding/removing classes
+    requires reloading templates that baked the old map in.
 
     ``composes: name from "./other.css"`` imports the other module
     recursively; the referenced modules are recorded in
@@ -83,7 +87,7 @@ class CobrastyleManager:
     ):
         self.resolver = resolver
         self.minify = minify
-        self.module_pattern = module_pattern
+        self.module_pattern = DEV_MODULE_PATTERN if module_pattern is None else module_pattern
         self.rewrite_class_names = rewrite_class_names
         self.targets = targets
         self.analyze_dependencies = analyze_dependencies

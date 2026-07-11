@@ -31,7 +31,7 @@ def test_dev_render_and_serve_view(page_project, extract):
         href = extract(r'href="([^"]+)"', html)
         class_name = extract(r'class="([^"]+)"', html)
         assert href == "/cobrastyle/page.css"
-        assert class_name.endswith("title")
+        assert class_name.startswith("page_title_")  # readable dev class names
 
         client = Client()
         # urlconf mounted at root here; a real project includes it under a prefix

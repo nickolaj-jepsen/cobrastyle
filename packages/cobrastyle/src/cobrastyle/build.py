@@ -24,6 +24,9 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_GLOBS = ("*.html", "*.jinja", "*.j2")
 
+# lightningcss's own default: compact, unlike the readable dev DEV_MODULE_PATTERN
+BUILD_MODULE_PATTERN = "[hash]_[local]"
+
 # scheme:, protocol-relative, or same-document fragment — passed through untouched
 _EXTERNAL_URL = re.compile(r"^(?:[a-z][a-z0-9+.-]*:|//|#)", re.IGNORECASE)
 
@@ -99,11 +102,14 @@ def collect_jinja2(
         raise BuildError("The environment has no loader; there are no templates to build")
     # Force a fresh manager compiled with dependency analysis: url()/@import
     # references become placeholders emit() resolves. The build emits
-    # production CSS — minified unless told otherwise, never source maps —
-    # whatever the environment's dev-serving configuration says.
+    # production CSS — minified unless told otherwise, never source maps,
+    # compact class names — whatever the environment's dev-serving
+    # configuration says.
     extended(build_env).cobrastyle_analyze_dependencies = True
     extended(build_env).cobrastyle_minify = minify
     extended(build_env).cobrastyle_source_map = False
+    if extended(build_env).cobrastyle_module_pattern is None:
+        extended(build_env).cobrastyle_module_pattern = BUILD_MODULE_PATTERN
     extension._manager = None
 
     pages: dict[str, list[str]] = {}

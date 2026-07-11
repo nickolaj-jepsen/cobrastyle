@@ -4,7 +4,7 @@ import fnmatch
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from cobrastyle.build import DEFAULT_GLOBS, CollectedTemplates, handle_compile_failure
+from cobrastyle.build import BUILD_MODULE_PATTERN, DEFAULT_GLOBS, CollectedTemplates, handle_compile_failure
 from cobrastyle.django.runtime import DTLRuntime, get_runtime, set_runtime
 from cobrastyle.jinja2 import ConfigureOptions
 from cobrastyle.manager import CobrastyleManager
@@ -30,8 +30,10 @@ def collect_dtl(
     temporary dev runtime with dependency analysis collects the modules.
     """
     # The build emits production CSS — minified unless told otherwise, never
-    # source maps — whatever the dev-serving options say.
+    # source maps, compact class names — whatever the dev-serving options say.
     options: ConfigureOptions = {**manager_options, "minify": minify, "source_map": False}
+    if options.get("module_pattern") is None:
+        options["module_pattern"] = BUILD_MODULE_PATTERN
     manager = CobrastyleManager(resolver, analyze_dependencies=True, **options)
     runtime = DTLRuntime(manager=manager)
     set_runtime(runtime)

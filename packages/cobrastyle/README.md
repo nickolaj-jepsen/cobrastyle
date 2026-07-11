@@ -46,7 +46,7 @@ Options for `configure()` (equivalently: set `cobrastyle_*`-prefixed attributes 
 | `resolver`            | —       | Required. Resolves stylesheet paths to content/URLs.     |
 | `minify`              | `False` | Minify dev-served CSS (the build always minifies).       |
 | `rewrite_class_names` | `True`  | Also expose `hello-world` as `hello_world`.              |
-| `module_pattern`      | `None`  | Class name pattern, e.g. `[hash]-[local]`.               |
+| `module_pattern`      | `None`  | Class name pattern; `None` means readable `[name]_[local]_[hash]` in dev and compact `[hash]_[local]` in the build. |
 | `targets`             | `None`  | Browserslist queries for vendor prefixing.               |
 | `source_map`          | `True`  | Serve dev CSS with an inline source map.                 |
 

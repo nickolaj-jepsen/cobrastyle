@@ -1,4 +1,5 @@
 import os
+import re
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
@@ -40,6 +41,23 @@ def test_dev_defaults_are_debuggable():
 
     assert stylesheet.code.count("\n") > 0  # not minified
     assert stylesheet.map is not None
+
+
+def test_default_class_names_are_readable():
+    manager = CobrastyleManager(InMemoryResolver({"components/button.css": ".primary { color: red; }"}))
+    classes = manager.import_module("components/button.css").classes
+
+    assert re.fullmatch(r"button_primary_[\w-]+", classes["primary"])
+
+
+def test_default_class_names_disambiguate_same_stem():
+    css = ".primary { color: red; }"
+    manager = CobrastyleManager(InMemoryResolver({"a/button.css": css, "b/button.css": css}))
+
+    first = manager.import_module("a/button.css").classes["primary"]
+    second = manager.import_module("b/button.css").classes["primary"]
+
+    assert first != second  # the [hash] covers the path, not just the stem
 
 
 def test_imports_are_bundled():

@@ -103,7 +103,9 @@ def configure(
 
     ``minify`` and ``source_map`` only shape dev-served CSS — readable
     output with a source map by default; the production build minifies
-    regardless.
+    regardless. ``module_pattern=None`` follows the same split: readable
+    dev class names (``[name]_[local]_[hash]``), compact build names
+    (``[hash]_[local]``). An explicit pattern applies to both.
 
     Dev mode rejects a ``bytecode_cache`` — a cache hit would silently skip
     the page tracking behind ``links()``; prod mode is cache-safe.

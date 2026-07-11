@@ -26,7 +26,7 @@ def test_fastapi_dev_e2e(page_project, extract):
     href = extract(r'href="([^"]+)"', html)
     class_name = extract(r'class="([^"]+)"', html)
     assert href == "/cobrastyle/page.css"
-    assert class_name.endswith("title")
+    assert class_name.startswith("page_title_")  # readable dev class names
 
     response = client.get(href)
     assert response.status_code == 200

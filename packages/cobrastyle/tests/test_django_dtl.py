@@ -204,7 +204,8 @@ def test_prod_render_uses_hashed_classes(project):
         call_command("cobrastyle_build", verbosity=0)
     manifest = Manifest.load(project / "cobrastyle_static" / "cobrastyle" / "manifest.json")
     class_name = manifest.modules["page.css"].classes["title"]
-    assert class_name != "title"
+    assert re.fullmatch(r"[\w-]+_title", class_name)
+    assert not class_name.startswith("page_")  # not the readable dev pattern
 
     prod = dict(project_settings(project, debug=False))
     prod["COBRASTYLE"] = {"ROOT": project / "styles"}

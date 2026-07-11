@@ -1,4 +1,5 @@
 import json
+import re
 
 import pytest
 from jinja2 import Environment, FileSystemLoader, FunctionLoader
@@ -63,6 +64,20 @@ def test_build_writes_hashed_css_and_manifest(project):
     on_disk = Manifest.load(out / "manifest.json")
     assert on_disk == manifest
     assert on_disk.generator["cobrastyle"]
+
+
+def test_build_defaults_to_compact_class_names(project):
+    manifest = build(make_environment(project), output_dir=project / "out")
+
+    class_name = manifest.modules["styles/button.css"].classes["button"]
+    assert re.fullmatch(r"[\w-]+_button", class_name)
+    assert not class_name.startswith("button_")  # not the readable dev pattern
+
+
+def test_build_honors_explicit_module_pattern(project):
+    manifest = build(make_environment(project, module_pattern="[local]"), output_dir=project / "out")
+
+    assert manifest.modules["styles/button.css"].classes["button"] == "button"
 
 
 def test_build_is_deterministic(project):
