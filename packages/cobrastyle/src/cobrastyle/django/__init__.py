@@ -129,11 +129,15 @@ def immutable_file_test(path: str, url: str) -> bool:
     recognizes names hashed by the storage itself — plus Django's 12-hex
     hashed names, so other assets keep their immutable headers too.
     """
+    from urllib.parse import urlparse
+
     from cobrastyle.build import HASHED_NAME
 
     prefix = static_prefix(app_config())
     if prefix is not None:
-        static_url = settings.STATIC_URL or "/static/"
+        # WhiteNoise passes a URL path — compare against STATIC_URL's path so
+        # absolute/CDN STATIC_URL settings still match
+        static_url = urlparse(settings.STATIC_URL or "/static/").path
         if url.startswith(static_url + prefix) and HASHED_NAME.search(url):
             return True
     return bool(_DJANGO_HASHED_NAME.search(url))

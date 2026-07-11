@@ -1,4 +1,5 @@
 import posixpath
+import re
 import threading
 from typing import NamedTuple
 
@@ -122,13 +123,22 @@ class CobrastyleManager:
             # A dependency disappeared; recompiling raises the real error
             return False
 
+    def _module_pattern_for(self, path: str) -> str:
+        if "[name]" not in self.module_pattern:
+            return self.module_pattern
+        # [name] embeds the file stem verbatim, and class attributes are
+        # whitespace-delimited — a stem like "button primary" would split the
+        # emitted class name in two
+        stem = re.sub(r"\s+", "_", posixpath.splitext(posixpath.basename(path))[0])
+        return self.module_pattern.replace("[name]", stem)
+
     def _compile(self, path: str) -> Stylesheet:
         resolved = self.resolver.resolve(path)
         result = bundle(
             filename=path,
             provider=_BundleProvider(self.resolver, path, resolved.content),
             module=True,
-            module_pattern=self.module_pattern,
+            module_pattern=self._module_pattern_for(path),
             minify=self.minify,
             targets=self.targets,
             analyze_dependencies=self.analyze_dependencies,

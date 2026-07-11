@@ -329,3 +329,12 @@ def test_concurrent_imports_compile_once():
 
     assert resolver.calls == 1
     assert all(result is results[0] for result in results)
+
+
+def test_dev_pattern_sanitizes_whitespace_in_the_file_stem():
+    manager = CobrastyleManager(InMemoryResolver({"button primary.css": ".title { color: red }"}))
+
+    classes = manager.import_module("button primary.css").classes
+
+    # class attributes are whitespace-delimited; a raw stem would split the name in two
+    assert classes["title"].startswith("button_primary_title_")

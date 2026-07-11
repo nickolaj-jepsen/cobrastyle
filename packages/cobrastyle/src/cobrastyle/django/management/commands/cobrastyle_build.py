@@ -9,7 +9,7 @@ from django.template.backends.django import DjangoTemplates
 from django.template.backends.jinja2 import Jinja2
 
 from cobrastyle.build import DEFAULT_GLOBS, BuildError, collect_jinja2, emit
-from cobrastyle.django import app_config, common_options, dev_resolver, output_dir, static_prefix
+from cobrastyle.django import app_config, common_options, dev_resolver, output_dir, static_prefix, static_url_map
 from cobrastyle.jinja2 import CobrastyleExtension, configure
 from cobrastyle.manager import Stylesheet
 
@@ -57,6 +57,14 @@ class Command(BaseCommand):
         static_url = settings.STATIC_URL or "/static/"
         default_prefix = static_url + (static_prefix(config) or "cobrastyle/")
         url_prefix = options["url_prefix"] or config.get("BUILD_URL_PREFIX", default_prefix)
+        if options["url_prefix"] and options["url_prefix"] != default_prefix and static_url_map(config) is not None:
+            self.stderr.write(
+                self.style.WARNING(
+                    "--url-prefix is baked into the manifest, but the prod runtime maps URLs through "
+                    "static() and will ignore it. Set COBRASTYLE['BUILD_URL_PREFIX'] instead, or "
+                    "disable the mapping with COBRASTYLE['STATIC_PREFIX'] = None."
+                )
+            )
         globs = tuple(options["globs"] or DEFAULT_GLOBS)
         strict = options["strict"]
         minify = not options["no_minify"]
@@ -87,6 +95,16 @@ class Command(BaseCommand):
                 collected = collect_dtl(
                     dtl_backend, resolver, common_options(config), globs=globs, strict=strict, minify=minify
                 )
+                # manifest.pages is keyed by relative template name — a name in both
+                # engines with different stylesheets cannot be represented
+                conflicts = sorted(
+                    name for name, modules in collected.pages.items() if pages.get(name, modules) != modules
+                )
+                if conflicts:
+                    raise CommandError(
+                        f"Template name(s) {', '.join(conflicts)} exist in both the Jinja2 and DTL "
+                        "backends with different stylesheets; rename one or scope the build with --glob."
+                    )
                 pages.update(collected.pages)
                 stylesheets.update({sheet.path: sheet for sheet in collected.stylesheets})
 

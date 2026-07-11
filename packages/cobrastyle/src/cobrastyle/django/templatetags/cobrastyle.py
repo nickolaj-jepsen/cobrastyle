@@ -121,7 +121,9 @@ class CxNode(template.Node):
     def render(self, context: template.Context) -> SafeString:
         parts: list[str] = []
         for value, condition, alternative in self.terms:
-            if condition is not None and not condition.resolve(context):
+            # ignore_failures: a missing condition variable is False, matching {% if %},
+            # not the engine's string_if_invalid (truthy when set for debugging)
+            if condition is not None and not condition.resolve(context, ignore_failures=True):
                 resolved = alternative.resolve(context) if alternative is not None else None
             else:
                 resolved = value.resolve(context)

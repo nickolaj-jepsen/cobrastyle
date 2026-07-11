@@ -438,3 +438,55 @@ def test_runtime_ignores_templates_without_an_origin(project):
     runtime.record(None, ("page.css",))
     assert runtime.pages == {}
     assert runtime.page_modules(None) == []
+
+
+def test_cx_condition_treats_missing_variable_as_false():
+    templates = {
+        "TEMPLATES": [
+            {
+                "BACKEND": "django.template.backends.django.DjangoTemplates",
+                "DIRS": [],
+                "APP_DIRS": False,
+                "OPTIONS": {"string_if_invalid": "INVALID"},
+            }
+        ]
+    }
+    with override_settings(**templates):
+        out = engines["django"].from_string("{% load cobrastyle %}{% cx 'btn' 'active' if missing %}").render({})
+
+    # matches {% if %}: a missing condition variable is False, not string_if_invalid
+    assert out == "btn"
+
+
+def test_build_command_warns_when_url_prefix_is_shadowed_by_static_mapping(project):
+    from io import StringIO
+
+    stderr = StringIO()
+    with override_settings(**project_settings(project)):
+        call_command("cobrastyle_build", url_prefix="/cdn/", stderr=stderr, verbosity=0)
+    assert "BUILD_URL_PREFIX" in stderr.getvalue()
+
+    stderr = StringIO()
+    config = {"ROOT": project / "styles", "STATIC_PREFIX": None}
+    with override_settings(**project_settings(project, cobrastyle=config)):
+        call_command("cobrastyle_build", url_prefix="/cdn/", stderr=stderr, verbosity=0)
+    assert stderr.getvalue() == ""  # mapping disabled: the prefix is honored, no warning
+
+
+def test_mixed_engines_conflicting_template_names_fail(project):
+    (project / "styles" / "other.css").write_text(".x { color: red; }")
+    (project / "templates_jinja").mkdir()
+    (project / "templates_jinja" / "index.html").write_text('{% cobrastyle styles = "other.css" %}x')
+    settings = project_settings(project)
+    settings["TEMPLATES"] = [
+        *settings["TEMPLATES"],
+        {
+            "BACKEND": "django.template.backends.jinja2.Jinja2",
+            "DIRS": [str(project / "templates_jinja")],
+            "APP_DIRS": False,
+            "OPTIONS": {"environment": "cobrastyle.django.environment"},
+        },
+    ]
+
+    with override_settings(**settings), pytest.raises(CommandError, match="both the Jinja2 and DTL"):
+        call_command("cobrastyle_build", verbosity=0)

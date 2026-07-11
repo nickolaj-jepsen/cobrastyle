@@ -286,3 +286,12 @@ def test_finder_has_no_system_checks(page_project):
 
     with override_settings(**project_settings(page_project)):
         assert CobrastyleFinder().check() == []
+
+
+def test_immutable_file_test_with_absolute_static_url():
+    from cobrastyle.django import immutable_file_test
+
+    # WhiteNoise passes URL paths; a CDN-style STATIC_URL must still match
+    with override_settings(STATIC_URL="https://cdn.example.com/static/"):
+        assert immutable_file_test("", "/static/cobrastyle/button.0123456789.css")
+        assert not immutable_file_test("", "/static/cobrastyle/button.css")
