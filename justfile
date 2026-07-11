@@ -20,12 +20,17 @@ test *args: sync
 lint:
     uv run ruff check .
     uv run ruff format --check .
+    uv run python scripts/versions.py check
     cargo fmt --manifest-path {{ rust_manifest }} -- --check
     cargo clippy --manifest-path {{ rust_manifest }} --all-targets -- -D warnings
 
 # Type-check the Python packages
 typecheck: sync
     uv run pyrefly check
+
+# Set the lockstep version across both Python packages and the Rust crate
+bump version:
+    uv run python scripts/versions.py set {{ version }}
 
 # Auto-format and auto-fix Python and Rust
 fmt:

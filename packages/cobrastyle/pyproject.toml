@@ -5,8 +5,10 @@ description = "CSS modules for Python template engines"
 readme = "README.md"
 license = "GPL-3.0-only"
 requires-python = ">=3.12"
+# Exact pin: CSS-module class hashes are only stable within a single
+# cobrastyle-lightningcss release. Versions are kept in lockstep by `just bump`.
 dependencies = [
-    "cobrastyle-lightningcss",
+    "cobrastyle-lightningcss==0.0.0.dev1",
 ]
 
 [project.optional-dependencies]
