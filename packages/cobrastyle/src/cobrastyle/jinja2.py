@@ -177,6 +177,8 @@ class CobrastyleExtension(Extension):
         extended(environment).globals.setdefault("cx", cx)
         extended(environment).globals[_PAGE_GLOBAL] = self._enter_page
         self._manager: CobrastyleManager | None = None
+        # check.py's hook: observes (assign target node, module path, class map) at parse time
+        self._binding_recorder: Callable[[nodes.Node, str, dict[str, str]], None] | None = None
         # Module paths statically imported by each compiled template
         self._pages: dict[str, list[str]] = {}
         self._anonymous_ids = count()
@@ -243,6 +245,8 @@ class CobrastyleExtension(Extension):
 
         path = normalize_path(path_expression.value)
         classes, page_paths = self._resolve_module(path, lineno, parser)
+        if self._binding_recorder is not None:
+            self._binding_recorder(target, path, classes)
 
         page_id = self._compiling.page_id
         if page_id is not None:

@@ -35,13 +35,14 @@ def cobrastyle(parser: template.base.Parser, token: template.base.Token) -> temp
     runtime = get_runtime()
     classes, page_paths = runtime.resolve(path)
     runtime.record(getattr(parser, "origin", None), page_paths)
-    return CobrastyleNode(bits[3], classes)
+    return CobrastyleNode(bits[3], classes, path)
 
 
 class CobrastyleNode(template.Node):
-    def __init__(self, variable_name: str, classes: dict[str, str]):
+    def __init__(self, variable_name: str, classes: dict[str, str], path: str):
         self.variable_name = variable_name
         self.classes = classes
+        self.path = path
 
     def render(self, context: template.Context) -> str:
         context[self.variable_name] = self.classes

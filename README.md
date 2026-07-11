@@ -147,6 +147,40 @@ content-hashed CSS (plus any `url()` assets, rewritten) and `manifest.json` — 
 input the prod runtime needs. Builds are deterministic: unchanged input produces
 byte-identical output.
 
+### Checking
+
+Because class maps resolve at template compile time, cobrastyle can verify that your
+templates and your CSS agree — the guarantee JS bundlers give, as a CI gate:
+
+```sh
+cobrastyle check myapp:create_environment          # same target adaptation as `build`
+python manage.py cobrastyle_check                  # Django: covers Jinja2 and DTL templates
+```
+
+`check` walks every template, resolving class maps the way the target is configured:
+a dev-configured environment compiles straight from source (no built manifest needed —
+point CI at a dev-configured factory), while a manifest-configured one validates against
+its built manifest. `manage.py cobrastyle_check` always compiles from source, like
+`cobrastyle_build`. It reports two things:
+
+- **Errors** — references to classes a module doesn't export, with template and line
+  number: `index.html:12: styles.buttom — no class 'buttom' in 'page.css' (did you mean
+  'button'?)`. These fail the command.
+- **Warnings** — exported classes no template references (likely dead CSS). Warnings
+  don't fail the command unless you pass `--strict-unused`.
+
+Errors are only raised for accesses that are provably against a class map: a name bound
+by `{% cobrastyle %}` in the same template and not shadowed. Anything unverifiable —
+`{% set copy = styles %}`, a dynamic subscript `styles[name]`, passing the map into a
+macro or include, a rebound or shadowed name — is never flagged, and marks that module's
+exports as potentially used so the unused report stays free of false positives too.
+Classes referenced only from a child template's block (via `extends`) count as used but
+aren't validated. DTL analysis is best-effort in the same spirit: it understands
+`{% for %}`/`{% with %}` rebinding and the common `... as var` tags, and errs toward
+silence when resolution is dynamic.
+
+`--strict` mirrors the build flag: fail on any template compile error, cobrastyle or not.
+
 ### Known limitations
 
 - Stylesheets imported inside `{% include %}`d templates aren't seen by `links()` in the

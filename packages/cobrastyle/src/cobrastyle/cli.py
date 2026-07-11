@@ -120,3 +120,51 @@ def build_command(
     except BuildError as exc:
         raise click.ClickException(str(exc)) from exc
     click.echo(f"Built {len(manifest.modules)} module(s) across {len(manifest.pages)} page(s) into {output_dir}")
+
+
+@cli.command("check")
+@click.argument("target")
+@click.option(
+    "--glob", "globs", multiple=True, help=f"Template glob(s) to check. [default: {', '.join(DEFAULT_GLOBS)}]"
+)
+@click.option("--template", "extra_templates", multiple=True, help="Extra template names the loader cannot enumerate.")
+@click.option("--strict", is_flag=True, help="Fail on any template compile error, cobrastyle or not.")
+@click.option("--strict-unused", is_flag=True, help="Exit non-zero when unused classes are reported.")
+def check_command(
+    target: str,
+    globs: tuple[str, ...],
+    extra_templates: tuple[str, ...],
+    strict: bool,
+    strict_unused: bool,
+) -> None:
+    """Validate template class references for TARGET (package.module:attribute).
+
+    Errors on references to classes a module does not export; warns about
+    exported classes no template references (best-effort — dynamic access
+    disables the unused report for that module). Class maps resolve the way
+    the target is configured: from source in dev mode, from the built
+    manifest in prod mode — point CI at a dev-configured target to check
+    without a build.
+    """
+    from cobrastyle.check import UsageCollector, check_jinja2
+
+    if "" not in sys.path and "." not in sys.path:
+        sys.path.insert(0, "")
+    environment = adapt_target(import_target(target))
+    collector = UsageCollector()
+    try:
+        check_jinja2(
+            environment, collector, globs=globs or DEFAULT_GLOBS, strict=strict, extra_templates=extra_templates
+        )
+    except BuildError as exc:
+        raise click.ClickException(str(exc)) from exc
+    report = collector.report()
+    for line in report.error_lines():
+        click.echo(line, err=True)
+    for line in report.warning_lines():
+        click.echo(line, err=True)
+    failures = report.failures(strict_unused=strict_unused)
+    if failures:
+        click.echo(f"{report.summary()}: {', '.join(failures)}")
+        raise SystemExit(1)
+    click.echo(f"{report.summary()}: OK")

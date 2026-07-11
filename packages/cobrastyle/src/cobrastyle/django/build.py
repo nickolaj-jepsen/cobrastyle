@@ -41,9 +41,7 @@ def collect_dtl(
         # Django caches parsed templates even in DEBUG (4.1+); {% cobrastyle %}
         # fires at parse time, so anything rendered earlier in this process
         # would silently drop out of the build without a reset.
-        for loader in backend.engine.template_loaders:
-            if hasattr(loader, "reset"):
-                loader.reset()
+        reset_loaders(backend)
         for name, file in _template_files(backend.engine, globs):
             try:
                 backend.get_template(name)
@@ -51,6 +49,9 @@ def collect_dtl(
                 handle_compile_failure(name, file.read_text(errors="replace"), exc, strict)
     finally:
         set_runtime(None)
+        # Symmetric reset: templates cached now were parsed under the throwaway
+        # runtime, whose page records die with it — later renders must re-parse
+        reset_loaders(backend)
 
     pages = {
         runtime.page_names[origin_name]: paths
@@ -58,6 +59,13 @@ def collect_dtl(
         if paths and origin_name in runtime.page_names
     }
     return CollectedTemplates(pages, manager.stylesheets, resolver)
+
+
+def reset_loaders(backend: DjangoTemplates) -> None:
+    """Drop the backend's parsed-template caches."""
+    for loader in backend.engine.template_loaders:
+        if hasattr(loader, "reset"):
+            loader.reset()
 
 
 def _template_files(engine: Engine, globs: tuple[str, ...]) -> list[tuple[str, Path]]:
