@@ -197,7 +197,12 @@ def _clean_output(output: Path) -> None:
 def _resolve_assets(
     stylesheet: Stylesheet, resolver: FileResolver | None, manifest: Manifest, output: Path, prefix: str
 ) -> tuple[str, list[str]]:
-    """Emit hashed copies of the module's url() assets and substitute their placeholders."""
+    """Emit hashed copies of the module's url() assets and substitute their placeholders.
+
+    Substituted references are relative to the module's own output location,
+    so the built CSS works wherever it is served from (any URL prefix, CDN
+    host, or static-file pipeline). The manifest still records absolute URLs.
+    """
     from cobrastyle_lightningcss import Dependency
 
     code = stylesheet.code
@@ -236,7 +241,10 @@ def _resolve_assets(
             target.write_bytes(data)
             manifest.assets[asset_path] = AssetEntry(file=hashed, url=prefix + hashed)
 
-        code = code.replace(dependency.placeholder, manifest.assets[asset_path].url + extra)
+        # Hashed names keep their source directory, so the module's final
+        # directory is known before its content hash is
+        relative = posixpath.relpath(manifest.assets[asset_path].file, start=posixpath.dirname(stylesheet.path) or ".")
+        code = code.replace(dependency.placeholder, relative + extra)
         if asset_path not in module_assets:
             module_assets.append(asset_path)
     return code, module_assets

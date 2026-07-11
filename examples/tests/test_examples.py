@@ -2,6 +2,7 @@
 
 import importlib
 import importlib.util
+import posixpath
 import re
 import sys
 
@@ -23,6 +24,15 @@ def load_module(path, name):
 
 def css_hrefs(html: str) -> list[str]:
     return re.findall(r'href="([^"]+\.css)"', html)
+
+
+def resolve_asset_ref(css_href: str, css: str, name: str) -> str:
+    """The URL a browser would fetch for the url() reference to ``name`` in the stylesheet at ``css_href``."""
+    match = re.search(rf'url\("?([^")]*{name}[^")]*)"?\)', css)
+    assert match, css
+    ref = match.group(1)
+    assert not ref.startswith(("/", "http")), ref  # built references stay relative to the stylesheet
+    return posixpath.normpath(posixpath.join(posixpath.dirname(css_href), ref))
 
 
 def test_flask_example(copy_example, monkeypatch):
@@ -56,9 +66,11 @@ def test_flask_example(copy_example, monkeypatch):
     hrefs = css_hrefs(prod.get("/").get_data(as_text=True))
     assert hrefs
     assert all(href.startswith("/static/cobrastyle/") for href in hrefs)
-    built = prod.get(next(href for href in hrefs if "index" in href))
+    index_href = next(href for href in hrefs if "index" in href)
+    built = prod.get(index_href)
     assert built.status_code == 200
-    assert "/static/cobrastyle/img/dots." in built.get_data(as_text=True)
+    asset_url = resolve_asset_ref(index_href, built.get_data(as_text=True), "dots")
+    assert prod.get(asset_url).status_code == 200
     about_hrefs = css_hrefs(prod.get("/about").get_data(as_text=True))
     built_about = prod.get(next(href for href in about_hrefs if "about" in href)).get_data(as_text=True)
     assert "code{" in built_about  # @import bundled, then minified
@@ -94,9 +106,11 @@ def test_fastapi_example(copy_example, monkeypatch):
     hrefs = css_hrefs(prod.get("/").text)
     assert hrefs
     assert all(href.startswith("/static/cobrastyle/") for href in hrefs)
-    built = prod.get(next(href for href in hrefs if "index" in href))
+    index_href = next(href for href in hrefs if "index" in href)
+    built = prod.get(index_href)
     assert built.status_code == 200
-    assert "/static/cobrastyle/img/dots." in built.text
+    asset_url = resolve_asset_ref(index_href, built.text, "dots")
+    assert prod.get(asset_url).status_code == 200
 
 
 def test_django_example(copy_example, monkeypatch):

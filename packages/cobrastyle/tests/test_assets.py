@@ -137,8 +137,10 @@ def test_build_hashes_and_rewrites_assets(asset_project):
     entry = manifest.modules["button.css"]
     assert entry.assets == ["img/icon.svg"]
     built = (out / entry.file).read_text()
-    assert asset.url in built
-    assert f"{asset.url}#frag" in built
+    # References are relative to the module's output location, not the URL prefix
+    assert asset.file in built
+    assert f"{asset.file}#frag" in built
+    assert "/static/" not in built
     assert "https://example.com/x.png" in built
     # No placeholders left behind
     assert "img/icon.svg" not in built
@@ -192,8 +194,31 @@ def test_build_resolves_urls_against_the_importing_file(asset_project):
     asset = manifest.assets["sub/dot.svg"]
     assert (out / asset.file).read_bytes() == b"<svg>dot</svg>"
     built = (out / manifest.modules["button.css"].file).read_text()
-    assert asset.url in built
+    assert asset.file in built
     assert manifest.modules["button.css"].assets == ["sub/dot.svg"]
+
+
+def test_built_asset_references_are_relative_to_the_module(asset_project):
+    styles = asset_project / "styles"
+    templates = asset_project / "templates"
+    (styles / "sub").mkdir()
+    (styles / "sub" / "card.css").write_text(
+        ".card { background: url(../img/icon.svg); list-style-image: url(local.svg); }"
+    )
+    (styles / "sub" / "local.svg").write_bytes(b"<svg>local</svg>")
+    (templates / "card.html").write_text('{% cobrastyle styles = "sub/card.css" %}{{ cobrastyle.links() }}')
+    out = asset_project / "out"
+
+    manifest = build(make_environment(asset_project), output_dir=out)
+
+    entry = manifest.modules["sub/card.css"]
+    built = (out / entry.file).read_text()
+    icon = manifest.assets["img/icon.svg"]
+    local = manifest.assets["sub/local.svg"]
+    # The module lives in sub/, so the shared asset climbs out and the sibling stays bare
+    assert f"../{icon.file}" in built
+    assert local.file.removeprefix("sub/") in built
+    assert local.file not in built
 
 
 def test_build_keeps_external_imports(asset_project):
