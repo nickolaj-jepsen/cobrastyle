@@ -1,0 +1,215 @@
+from __future__ import annotations
+
+import fnmatch
+import hashlib
+import logging
+import posixpath
+import re
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as package_version
+from pathlib import Path, PurePosixPath
+from typing import TYPE_CHECKING
+
+from jinja2 import Environment
+
+from cobrastyle.jinja2 import CobrastyleExtension, extended
+from cobrastyle.manifest import AssetEntry, Manifest, ModuleEntry
+from cobrastyle.paths import normalize_path
+
+if TYPE_CHECKING:
+    from cobrastyle.manager import Stylesheet
+    from cobrastyle.resolvers import FileResolver
+
+logger = logging.getLogger(__name__)
+
+DEFAULT_GLOBS = ("*.html", "*.jinja", "*.j2")
+
+# scheme:, protocol-relative, or same-document fragment — passed through untouched
+_EXTERNAL_URL = re.compile(r"^(?:[a-z][a-z0-9+.-]*:|//|#)", re.IGNORECASE)
+
+
+class BuildError(Exception):
+    """The build cannot produce a complete, correct manifest."""
+
+
+def handle_compile_failure(name: str, source: str, exc: Exception, strict: bool) -> None:
+    """Raise :class:`BuildError` when the template matters (decision: strict, or it mentions cobrastyle);
+    otherwise log the skip so nothing is dropped silently."""
+    if strict or "cobrastyle" in source:
+        raise BuildError(f"Failed to compile template {name!r}: {exc}") from exc
+    logger.warning("Skipping template %s (does not use cobrastyle): %s", name, exc)
+
+
+def build(
+    environment: Environment,
+    *,
+    output_dir: str | Path,
+    url_prefix: str = "/static/",
+    globs: tuple[str, ...] = DEFAULT_GLOBS,
+    strict: bool = False,
+    extra_templates: tuple[str, ...] = (),
+) -> Manifest:
+    """Compile every template's stylesheets and write hashed CSS + ``manifest.json`` to ``output_dir``.
+
+    Templates are enumerated via ``list_templates()`` filtered by ``globs``,
+    plus ``extra_templates`` (the escape hatch for loaders that can't
+    enumerate). Compilation bypasses both template caches so extension hooks
+    always run. A template that fails to compile is skipped with a warning
+    unless it mentions cobrastyle or ``strict`` is set — then it's a
+    :class:`BuildError`. Output is deterministic: identical input produces
+    byte-identical files.
+    """
+    pages, stylesheets, resolver = collect_jinja2(
+        environment, globs=globs, strict=strict, extra_templates=extra_templates
+    )
+    return emit(stylesheets, resolver, pages, output_dir=output_dir, url_prefix=url_prefix)
+
+
+def collect_jinja2(
+    environment: Environment,
+    *,
+    globs: tuple[str, ...] = DEFAULT_GLOBS,
+    strict: bool = False,
+    extra_templates: tuple[str, ...] = (),
+) -> tuple[dict[str, list[str]], list[Stylesheet], FileResolver | None]:
+    """Walk the environment's templates; return (pages, compiled stylesheets, resolver)."""
+    build_env = environment.overlay()
+    extension = CobrastyleExtension.get(build_env)
+    if extension is None:
+        raise BuildError("CobrastyleExtension is not registered on the environment")
+    if build_env.loader is None:
+        raise BuildError("The environment has no loader; there are no templates to build")
+    # Force a fresh manager compiled with dependency analysis: url()/@import
+    # references become placeholders emit() resolves.
+    extended(build_env).cobrastyle_analyze_dependencies = True
+    extension._manager = None
+
+    pages: dict[str, list[str]] = {}
+    for name in _enumerate(build_env, globs, extra_templates):
+        try:
+            source, filename, _ = build_env.loader.get_source(build_env, name)
+        except Exception as exc:
+            raise BuildError(f"Cannot load template {name!r}: {exc}") from exc
+        try:
+            build_env.compile(source, name=name, filename=filename)
+        except Exception as exc:
+            handle_compile_failure(name, source, exc, strict)
+            continue
+        if modules := extension.page_modules(name):
+            pages[name] = modules
+
+    manager = extension._manager
+    if manager is None:
+        return pages, [], None
+    return pages, manager.stylesheets, manager.resolver
+
+
+def emit(
+    stylesheets: list[Stylesheet],
+    resolver: FileResolver | None,
+    pages: dict[str, list[str]],
+    *,
+    output_dir: str | Path,
+    url_prefix: str = "/static/",
+) -> Manifest:
+    """Write hashed CSS files, url() assets and ``manifest.json`` to ``output_dir``."""
+    prefix = url_prefix if url_prefix.endswith("/") else url_prefix + "/"
+    output = Path(output_dir)
+    manifest = Manifest(generator=_generator_versions(), pages=pages)
+
+    for stylesheet in sorted(stylesheets, key=lambda s: s.path):
+        code, module_assets = _resolve_assets(stylesheet, resolver, manifest, output, prefix)
+        data = code.encode()
+        hashed = _hashed_name(stylesheet.path, data)
+        target = output / hashed
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+        manifest.modules[stylesheet.path] = ModuleEntry(
+            file=hashed,
+            url=prefix + hashed,
+            classes=stylesheet.classes,
+            assets=module_assets,
+        )
+
+    manifest.dump(output / "manifest.json")
+    return manifest
+
+
+def _hashed_name(path: str, data: bytes) -> str:
+    digest = hashlib.sha256(data).hexdigest()[:10]
+    source_path = PurePosixPath(path)
+    return str(source_path.parent / f"{source_path.stem}.{digest}{source_path.suffix}")
+
+
+def _resolve_assets(
+    stylesheet: Stylesheet, resolver: FileResolver | None, manifest: Manifest, output: Path, prefix: str
+) -> tuple[str, list[str]]:
+    """Emit hashed copies of the module's url() assets and substitute their placeholders."""
+    from cobrastyle_lightningcss import Dependency
+
+    code = stylesheet.code
+    module_assets: list[str] = []
+    for dependency in stylesheet.dependencies:
+        if not isinstance(dependency, Dependency.Url):
+            url = dependency.url if isinstance(dependency, Dependency.Import) else "?"
+            raise BuildError(
+                f"@import of {url!r} in {stylesheet.path!r} is not supported by the build yet; "
+                "load both stylesheets from the template instead."
+            )
+        if _EXTERNAL_URL.match(dependency.url):
+            code = code.replace(dependency.placeholder, dependency.url)
+            continue
+
+        bare_url = dependency.url.split("?", 1)[0].split("#", 1)[0]
+        extra = dependency.url[len(bare_url) :]
+        try:
+            asset_path = normalize_path(posixpath.join(posixpath.dirname(stylesheet.path), bare_url))
+        except ValueError as exc:
+            raise BuildError(f"Asset {dependency.url!r} in {stylesheet.path!r} escapes the resolver root") from exc
+
+        if asset_path not in manifest.assets:
+            # A stylesheet with local url() dependencies was compiled by a manager, which has a resolver
+            assert resolver is not None
+            try:
+                data = resolver.read_bytes(asset_path)
+            except (KeyError, OSError) as exc:
+                raise BuildError(f"Asset {asset_path!r} referenced by {stylesheet.path!r} not found: {exc}") from exc
+            hashed = _hashed_name(asset_path, data)
+            target = output / hashed
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+            manifest.assets[asset_path] = AssetEntry(file=hashed, url=prefix + hashed)
+
+        code = code.replace(dependency.placeholder, manifest.assets[asset_path].url + extra)
+        if asset_path not in module_assets:
+            module_assets.append(asset_path)
+    return code, module_assets
+
+
+def _enumerate(environment: Environment, globs: tuple[str, ...], extra_templates: tuple[str, ...]) -> list[str]:
+    try:
+        names = environment.list_templates()
+    except TypeError as exc:
+        if not extra_templates:
+            raise BuildError(
+                f"This loader cannot enumerate templates ({exc}); pass extra_templates with explicit names."
+            ) from exc
+        names = []
+    matched = [name for name in names if any(fnmatch.fnmatch(name, glob) for glob in globs)]
+    for name in extra_templates:
+        if name not in matched:
+            matched.append(name)
+    return matched
+
+
+def _generator_versions() -> dict[str, str]:
+    import cobrastyle_lightningcss
+
+    try:
+        own_version = package_version("cobrastyle")
+    except PackageNotFoundError:
+        own_version = "unknown"
+    return {
+        "cobrastyle": own_version,
+        "lightningcss": getattr(cobrastyle_lightningcss, "LIGHTNINGCSS_VERSION", "unknown"),
+    }
