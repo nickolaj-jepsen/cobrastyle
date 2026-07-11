@@ -4,7 +4,7 @@ import pytest
 
 django = pytest.importorskip("django")
 
-from django.core.management import call_command  # noqa: E402
+from django.core.management import CommandError, call_command  # noqa: E402
 from django.template import TemplateSyntaxError, engines  # noqa: E402
 from django.test import Client, override_settings  # noqa: E402
 
@@ -281,3 +281,160 @@ def test_cx_tag_escapes_unsafe_values():
 def test_cx_tag_requires_a_term():
     with pytest.raises(TemplateSyntaxError):
         _render_cx("{% cx %}")
+
+
+def test_build_command_options(project):
+    (project / "styles" / "admin.css").write_text(".panel { color: red; }")
+    (project / "templates" / "admin").mkdir()
+    (project / "templates" / "admin" / "panel.html").write_text(
+        '{% load cobrastyle %}{% cobrastyle "admin.css" as styles %}{{ styles.panel }}'
+    )
+    out = project / "custom_out"
+    with override_settings(**project_settings(project)):
+        call_command(
+            "cobrastyle_build", out=str(out), url_prefix="/cdn/", globs=["admin/*.html"], no_minify=True, verbosity=0
+        )
+
+    manifest = Manifest.load(out / "manifest.json")
+    assert set(manifest.pages) == {"admin/panel.html"}
+    entry = manifest.modules["admin.css"]
+    assert entry.url == "/cdn/" + entry.file
+    assert "color: red" in (out / entry.file).read_text()  # readable, not minified
+
+
+def test_build_command_clean(project):
+    with override_settings(**project_settings(project)):
+        call_command("cobrastyle_build", verbosity=0)
+        out = project / "cobrastyle_static" / "cobrastyle"
+        stale = next(out.glob("page.*.css"))
+        (project / "styles" / "page.css").write_text(".title { color: green; }")
+
+        call_command("cobrastyle_build", clean=True, verbosity=0)
+
+    assert not stale.exists()
+    manifest = Manifest.load(out / "manifest.json")
+    assert "green" in (out / manifest.modules["page.css"].file).read_text()
+
+
+def test_build_command_strict_fails_on_broken_dtl_template(project):
+    (project / "templates" / "broken.html").write_text("{% bogus %}")
+
+    with (
+        override_settings(**project_settings(project)),
+        pytest.raises(CommandError, match=r"broken\.html"),
+    ):
+        call_command("cobrastyle_build", strict=True, verbosity=0)
+
+
+def test_broken_dtl_template_without_cobrastyle_is_skipped(project, caplog):
+    (project / "templates" / "broken.html").write_text("{% bogus %}")
+
+    with override_settings(**project_settings(project)), caplog.at_level("WARNING", logger="cobrastyle.build"):
+        call_command("cobrastyle_build", verbosity=0)
+
+    manifest = Manifest.load(project / "cobrastyle_static" / "cobrastyle" / "manifest.json")
+    assert "broken.html" not in manifest.pages
+    assert any("broken.html" in record.message for record in caplog.records)
+
+
+def test_build_command_requires_an_engine(project):
+    settings = project_settings(project)
+    settings["TEMPLATES"] = []
+
+    with override_settings(**settings), pytest.raises(CommandError, match="No usable template engine"):
+        call_command("cobrastyle_build", verbosity=0)
+
+
+def test_first_template_dir_wins(project):
+    second = project / "templates2"
+    second.mkdir()
+    (project / "styles" / "shadow.css").write_text(".shadow { color: red; }")
+    (second / "index.html").write_text('{% load cobrastyle %}{% cobrastyle "shadow.css" as styles %}')
+    settings = project_settings(project)
+    settings["TEMPLATES"][0]["DIRS"].append(str(second))
+
+    with override_settings(**settings):
+        call_command("cobrastyle_build", verbosity=0)
+
+    manifest = Manifest.load(project / "cobrastyle_static" / "cobrastyle" / "manifest.json")
+    assert manifest.pages["index.html"] == ["page.css"]
+    assert "shadow.css" not in manifest.modules
+
+
+def test_app_dirs_templates_are_collected(project, monkeypatch):
+    app_dir = project / "dtlapp"
+    (app_dir / "templates").mkdir(parents=True)
+    (app_dir / "__init__.py").write_text("")
+    (app_dir / "templates" / "apppage.html").write_text('{% load cobrastyle %}{% cobrastyle "page.css" as styles %}')
+    monkeypatch.syspath_prepend(str(project))
+    settings = project_settings(project)
+    settings["TEMPLATES"][0]["APP_DIRS"] = True
+    settings["INSTALLED_APPS"] = ["django.contrib.staticfiles", "cobrastyle.django", "dtlapp"]
+
+    with override_settings(**settings):
+        call_command("cobrastyle_build", verbosity=0)
+
+    manifest = Manifest.load(project / "cobrastyle_static" / "cobrastyle" / "manifest.json")
+    assert set(manifest.pages) == {"index.html", "apppage.html"}
+
+
+def test_manifest_object_in_settings(project):
+    with override_settings(**project_settings(project)):
+        call_command("cobrastyle_build", verbosity=0)
+    manifest = Manifest.load(project / "cobrastyle_static" / "cobrastyle" / "manifest.json")
+
+    config = {"ROOT": project / "styles", "MODULE_PATTERN": "[local]", "MANIFEST": manifest}
+    with override_settings(**project_settings(project, debug=False, cobrastyle=config)):
+        html = render("index.html")
+
+    assert manifest.modules["page.css"].file in html
+
+
+def test_prod_links_escape_hatch_missing_module_is_render_error(project):
+    with override_settings(**project_settings(project)):
+        call_command("cobrastyle_build", verbosity=0)
+
+    (project / "templates" / "hatch.html").write_text('{% load cobrastyle %}{% cobrastyle_links "ghost.css" %}')
+    with (
+        override_settings(**project_settings(project, debug=False)),
+        pytest.raises(TemplateSyntaxError, match="cobrastyle_build"),
+    ):
+        render("hatch.html")
+
+
+def test_cobrastyle_tag_arity_error(project):
+    (project / "templates" / "bad.html").write_text('{% load cobrastyle %}{% cobrastyle "page.css" styles %}')
+
+    with override_settings(**project_settings(project)), pytest.raises(TemplateSyntaxError, match="cobrastyle expects"):
+        render("bad.html")
+
+
+def test_traversal_path_is_rejected(project):
+    (project / "templates" / "bad.html").write_text('{% load cobrastyle %}{% cobrastyle "../secret.css" as s %}')
+
+    with override_settings(**project_settings(project)), pytest.raises(TemplateSyntaxError, match="relative"):
+        render("bad.html")
+
+
+def test_cx_tag_parse_errors(project):
+    with override_settings(**project_settings(project)):
+        engine = engines["django"]
+        with pytest.raises(TemplateSyntaxError, match="at least one"):
+            engine.from_string("{% load cobrastyle %}{% cx %}")
+        with pytest.raises(TemplateSyntaxError, match="'if' must be followed"):
+            engine.from_string('{% load cobrastyle %}{% cx "a" if %}')
+        with pytest.raises(TemplateSyntaxError, match="'else' must be followed"):
+            engine.from_string('{% load cobrastyle %}{% cx "a" if flag else %}')
+
+
+def test_runtime_ignores_templates_without_an_origin(project):
+    from cobrastyle.django.runtime import DTLRuntime
+    from cobrastyle.manager import CobrastyleManager
+    from cobrastyle.resolvers import FileSystemResolver
+
+    runtime = DTLRuntime(manager=CobrastyleManager(FileSystemResolver(project / "styles")))
+
+    # from_string templates have no origin; recording and lookup are both no-ops
+    runtime.record(None, ("page.css",))
+    assert runtime.pages == {}
+    assert runtime.page_modules(None) == []

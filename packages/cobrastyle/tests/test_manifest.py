@@ -1,6 +1,6 @@
 import pytest
 
-from cobrastyle.manifest import Manifest, ManifestError, ModuleEntry
+from cobrastyle.manifest import AssetEntry, Manifest, ManifestError, ModuleEntry
 
 
 def make_manifest() -> Manifest:
@@ -46,3 +46,28 @@ def test_unsupported_version():
 def test_malformed():
     with pytest.raises(ManifestError, match="Malformed"):
         Manifest.from_dict({"version": 1, "modules": {"a.css": {"nope": True}}})
+
+
+def test_invalid_json(tmp_path):
+    (tmp_path / "manifest.json").write_text("{not json")
+
+    with pytest.raises(ManifestError, match="not valid JSON"):
+        Manifest.load(tmp_path / "manifest.json")
+
+
+def test_missing_modules_key_is_malformed():
+    with pytest.raises(ManifestError, match="Malformed"):
+        Manifest.from_dict({"version": 1})
+
+
+def test_malformed_assets():
+    with pytest.raises(ManifestError, match="Malformed"):
+        Manifest.from_dict({"version": 1, "modules": {}, "assets": {"icon.svg": {"nope": True}}})
+
+
+def test_round_trip_with_assets(tmp_path):
+    manifest = make_manifest()
+    manifest.assets["img/icon.svg"] = AssetEntry(file="img/icon.abc.svg", url="/static/img/icon.abc.svg")
+    manifest.dump(tmp_path / "manifest.json")
+
+    assert Manifest.load(tmp_path / "manifest.json") == manifest

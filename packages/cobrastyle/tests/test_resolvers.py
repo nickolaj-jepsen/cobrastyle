@@ -1,3 +1,5 @@
+import os
+
 import pytest
 
 from cobrastyle import FileSystemResolver, InMemoryResolver
@@ -9,6 +11,24 @@ def test_in_memory_resolver():
 
     assert resolved.url == "test.css"
     assert resolved.content == ".a {}"
+
+
+def test_in_memory_resolver_freshness_and_bytes():
+    resolver = InMemoryResolver({"test.css": ".a {}"})
+
+    assert resolver.mtime("test.css") is None
+    assert resolver.read_bytes("test.css") == b".a {}"
+    with pytest.raises(KeyError):
+        resolver.read_bytes("missing.css")
+
+
+def test_file_system_resolver_freshness_and_bytes(tmp_path):
+    (tmp_path / "test.css").write_text(".a {}")
+    os.utime(tmp_path / "test.css", (1000, 1000))
+    resolver = FileSystemResolver(tmp_path)
+
+    assert resolver.mtime("test.css") == 1000
+    assert resolver.read_bytes("test.css") == b".a {}"
 
 
 def test_file_system_resolver(tmp_path):
@@ -27,5 +47,6 @@ def test_file_system_resolver_rejects_path_traversal(tmp_path):
     (tmp_path / "secret.css").write_text(".a {}")
     resolver = FileSystemResolver(tmp_path / "styles")
 
-    with pytest.raises(ValueError, match="escapes"):
-        resolver.resolve("../secret.css")
+    for access in (resolver.resolve, resolver.mtime, resolver.read_bytes):
+        with pytest.raises(ValueError, match="escapes"):
+            access("../secret.css")

@@ -51,3 +51,47 @@ def test_install_rejects_non_environment():
     untyped_install = cast(Any, install)  # the overloads make this call unwritable in typed code
     with pytest.raises(TypeError, match="Environment"):
         untyped_install(object())
+
+
+def test_install_requires_resolver_root_or_manifest(page_project):
+    untyped_install = cast(Any, install)
+    templates = Jinja2Templates(directory=str(page_project / "templates"))
+
+    with pytest.raises(TypeError, match="resolver=, root="):
+        untyped_install(templates)
+
+
+def test_install_accepts_bare_environment_and_custom_resolver(page_project):
+    from jinja2 import Environment, FileSystemLoader
+
+    from cobrastyle import FileSystemResolver
+
+    app = fastapi.FastAPI()
+    environment = Environment(loader=FileSystemLoader(page_project / "templates"))
+    install(environment, app, resolver=FileSystemResolver(page_project / "styles", url_prefix="/styles/"))
+
+    # The dev server mounts at the resolver's own prefix, not the default
+    html = environment.get_template("index.html").render()
+    assert "/styles/page.css" in html
+    assert TestClient(app).get("/styles/page.css").status_code == 200
+
+
+def test_install_serve_false_mounts_nothing(page_project):
+    app = fastapi.FastAPI()
+    templates = Jinja2Templates(directory=str(page_project / "templates"))
+    install(templates, app, root=page_project / "styles", serve=False)
+
+    assert TestClient(app).get("/cobrastyle/page.css").status_code == 404
+
+
+def test_fastapi_serves_raw_assets(page_project):
+    (page_project / "styles" / "img").mkdir()
+    (page_project / "styles" / "img" / "dot.svg").write_bytes(b"<svg/>")
+    app = fastapi.FastAPI()
+    templates = Jinja2Templates(directory=str(page_project / "templates"))
+    install(templates, app, root=page_project / "styles")
+
+    response = TestClient(app).get("/cobrastyle/img/dot.svg")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("image/svg")
+    assert response.content == b"<svg/>"

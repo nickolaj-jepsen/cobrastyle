@@ -2,12 +2,14 @@ import json
 import re
 
 import pytest
-from jinja2 import Environment, FileSystemLoader, FunctionLoader
+from jinja2 import DictLoader, Environment, FileSystemLoader, FunctionLoader
 
 from cobrastyle import FileSystemResolver, InMemoryResolver
-from cobrastyle.build import BuildError, build
+from cobrastyle.build import BuildError, build, collect_jinja2, emit
 from cobrastyle.jinja2 import CobrastyleExtension, configure
+from cobrastyle.manager import Stylesheet
 from cobrastyle.manifest import Manifest
+from cobrastyle_lightningcss import transform
 
 
 @pytest.fixture
@@ -190,6 +192,84 @@ def test_function_loader_with_extra_templates(project):
 
     assert manifest.pages == {"page.html": ["test.css"]}
     assert set(manifest.modules) == {"test.css"}
+
+
+def test_url_prefix_without_trailing_slash_is_normalized(project):
+    manifest = build(make_environment(project), output_dir=project / "out", url_prefix="/assets")
+
+    entry = manifest.modules["styles/page.css"]
+    assert entry.url == "/assets/" + entry.file
+
+
+def test_collect_requires_the_extension():
+    environment = Environment(loader=DictLoader({}))
+
+    with pytest.raises(BuildError, match="not registered"):
+        collect_jinja2(environment)
+
+
+def test_build_requires_a_loader():
+    environment = Environment(extensions=[CobrastyleExtension])
+    configure(environment, resolver=InMemoryResolver({}))
+
+    with pytest.raises(BuildError, match="no loader"):
+        build(environment, output_dir="/unused")
+
+
+def test_unloadable_template_fails(project):
+    with pytest.raises(BuildError, match="Cannot load template"):
+        build(make_environment(project), output_dir=project / "out", extra_templates=("missing.html",))
+
+
+def test_build_with_no_templates_emits_an_empty_manifest(tmp_path):
+    environment = Environment(loader=DictLoader({}), extensions=[CobrastyleExtension])
+    configure(environment, resolver=InMemoryResolver({}))
+
+    # clean=True on a directory that does not exist yet is a no-op
+    manifest = build(environment, output_dir=tmp_path / "out", clean=True)
+
+    assert manifest.modules == {}
+    assert manifest.pages == {}
+    assert (tmp_path / "out" / "manifest.json").exists()
+
+
+def test_generator_version_falls_back_to_unknown(project, monkeypatch):
+    from importlib.metadata import PackageNotFoundError
+
+    def missing(name):
+        raise PackageNotFoundError(name)
+
+    monkeypatch.setattr("cobrastyle.build.package_version", missing)
+
+    manifest = build(make_environment(project), output_dir=project / "out")
+
+    assert manifest.generator["cobrastyle"] == "unknown"
+
+
+def mint_dependency(filename, css):
+    """Compile ``css`` with dependency analysis to get a real Dependency object and its placeholder code."""
+    result = transform(filename=filename, code=css, analyze_dependencies=True)
+    assert result.dependencies is not None
+    (dependency,) = result.dependencies
+    return result.code, dependency
+
+
+def test_emit_rejects_unresolved_local_imports(tmp_path):
+    # The bundler inlines every non-external @import before emit sees it; a
+    # relative Import dependency reaching emit means the pipeline broke
+    code, dependency = mint_dependency("page.css", '@import "local.css"; .a { color: red; }')
+    stylesheet = Stylesheet(path="page.css", url="page.css", code=code, classes={}, dependencies=(dependency,))
+
+    with pytest.raises(BuildError, match="Unresolvable @import"):
+        emit([stylesheet], None, {}, output_dir=tmp_path / "out")
+
+
+def test_emit_rejects_assets_escaping_the_root(tmp_path):
+    code, dependency = mint_dependency("page.css", ".a { background: url(../../evil.svg); }")
+    stylesheet = Stylesheet(path="page.css", url="page.css", code=code, classes={}, dependencies=(dependency,))
+
+    with pytest.raises(BuildError, match="escapes the resolver root"):
+        emit([stylesheet], None, {}, output_dir=tmp_path / "out")
 
 
 def test_build_does_not_pollute_app_environment(project):

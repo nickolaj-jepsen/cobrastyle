@@ -320,3 +320,22 @@ def test_cx_autoescaped():
     configure(jinja, resolver=InMemoryResolver({}))
     result = jinja.from_string("{{ cx(evil) }}").render(evil='a" onload="x')
     assert result == "a&#34; onload=&#34;x"
+
+
+def test_configure_forwards_compile_options():
+    jinja = Environment(loader=DictLoader({}), extensions=[CobrastyleExtension])
+    configure(
+        jinja,
+        resolver=InMemoryResolver({"test.css": ".a { user-select: none; }"}),
+        minify=True,
+        targets=["safari >= 13"],
+        source_map=False,
+    )
+    extension = CobrastyleExtension.get(jinja)
+    assert extension is not None
+
+    stylesheet = extension.manager.import_module("test.css")
+
+    assert "-webkit-user-select" in stylesheet.code
+    assert stylesheet.map is None
+    assert "\n" not in stylesheet.code.strip()  # minified

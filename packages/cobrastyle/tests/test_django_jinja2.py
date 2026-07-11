@@ -4,6 +4,7 @@ django = pytest.importorskip("django")
 
 from django.core.management import call_command  # noqa: E402
 from django.template import engines  # noqa: E402
+from django.template.backends.jinja2 import Jinja2  # noqa: E402
 from django.test import Client, override_settings  # noqa: E402
 
 from cobrastyle.manifest import Manifest  # noqa: E402
@@ -200,3 +201,88 @@ def test_build_url_prefix_opts_out_of_static_mapping(page_project, extract):
     href = extract(r'href="([^"]+)"', html)
     assert href == manifest.modules["page.css"].url
     assert href.startswith("https://cdn.example.com/assets/")
+
+
+def test_settings_forward_compile_options(page_project):
+    import os
+
+    from cobrastyle.jinja2 import CobrastyleExtension
+
+    stylesheet = page_project / "styles" / "page.css"
+    stylesheet.write_text(".title { user-select: none; }")
+    os.utime(stylesheet, (1000, 1000))
+    config = {
+        "ROOT": page_project / "styles",
+        "MINIFY": True,
+        "SOURCE_MAP": False,
+        "TARGETS": ["safari >= 13"],
+        "REWRITE_CLASS_NAMES": False,
+        "MODULE_PATTERN": "[local]",
+    }
+
+    with override_settings(**project_settings(page_project, cobrastyle=config)):
+        backend = engines["jinja2"]
+        assert isinstance(backend, Jinja2)
+        extension = CobrastyleExtension.get(backend.env)
+        assert extension is not None
+        compiled = extension.manager.import_module("page.css")
+
+    assert extension.manager.rewrite_class_names is False
+    assert "-webkit-user-select" in compiled.code
+    assert compiled.map is None
+    assert "\n" not in compiled.code.strip()  # minified
+
+
+def test_serve_view_supports_head(page_project):
+    with override_settings(**project_settings(page_project), ROOT_URLCONF="cobrastyle.django.urls"):
+        response = Client().head("/page.css")
+
+    assert response.status_code == 200
+    assert not response.content
+    assert response.headers["ETag"]
+
+
+def test_serve_view_404s_when_unconfigured():
+    # No BASE_DIR and no COBRASTYLE['ROOT']: resolving a manager raises, the view answers 404
+    with override_settings(DEBUG=True, TEMPLATES=[], ROOT_URLCONF="cobrastyle.django.urls"):
+        assert Client().get("/page.css").status_code == 404
+
+
+def test_serve_view_404s_in_manifest_mode_even_with_debug(page_project):
+    with override_settings(**project_settings(page_project)):
+        call_command("cobrastyle_build", verbosity=0)
+    manifest = Manifest.load(page_project / "cobrastyle_static" / "cobrastyle" / "manifest.json")
+
+    config = {"DEV": False, "MANIFEST": manifest}
+    with override_settings(
+        DEBUG=True, BASE_DIR=page_project, COBRASTYLE=config, TEMPLATES=[], ROOT_URLCONF="cobrastyle.django.urls"
+    ):
+        assert Client().get("/page.css").status_code == 404
+
+
+def test_missing_base_dir_is_improperly_configured():
+    from django.core.exceptions import ImproperlyConfigured
+
+    from cobrastyle.django import dev_resolver
+
+    with pytest.raises(ImproperlyConfigured, match="BASE_DIR"):
+        dev_resolver({})
+
+
+def test_finder_requires_a_static_prefix():
+    from django.core.exceptions import ImproperlyConfigured
+
+    from cobrastyle.django.finders import CobrastyleFinder
+
+    with (
+        override_settings(COBRASTYLE={"STATIC_PREFIX": None}),
+        pytest.raises(ImproperlyConfigured, match="STATIC_PREFIX"),
+    ):
+        CobrastyleFinder()
+
+
+def test_finder_has_no_system_checks(page_project):
+    from cobrastyle.django.finders import CobrastyleFinder
+
+    with override_settings(**project_settings(page_project)):
+        assert CobrastyleFinder().check() == []

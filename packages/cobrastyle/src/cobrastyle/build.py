@@ -167,6 +167,7 @@ def emit(
             assets=module_assets,
         )
 
+    output.mkdir(parents=True, exist_ok=True)
     manifest.dump(output / "manifest.json")
     return manifest
 

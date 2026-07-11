@@ -8,14 +8,20 @@ class CssModuleReference:
     class Local(CssModuleReference):
         name: str
 
+        def __init__(self, name: str) -> None: ...
+
     @final
     class Global(CssModuleReference):
         name: str
+
+        def __init__(self, name: str) -> None: ...
 
     @final
     class Dependency(CssModuleReference):
         name: str
         specifier: str
+
+        def __init__(self, name: str, specifier: str) -> None: ...
 
 @final
 class CssModuleExport:

@@ -1,10 +1,12 @@
 import os
 import re
 from concurrent.futures import ThreadPoolExecutor
+from types import SimpleNamespace
 
 import pytest
 
 from cobrastyle import CobrastyleManager, FileSystemResolver, InMemoryResolver, ResolvedFile
+from cobrastyle_lightningcss import CssModuleReference
 
 
 class CountingResolver:
@@ -214,6 +216,108 @@ def test_path_normalization():
         manager.import_module("/etc/passwd")
     with pytest.raises(ValueError, match="relative"):
         manager.import_module("../secret.css")
+
+
+def test_targets_add_vendor_prefixes():
+    manager = CobrastyleManager(
+        InMemoryResolver({"test.css": ".a { user-select: none; }"}), targets=["safari >= 13"], minify=True
+    )
+
+    assert "-webkit-user-select" in manager.import_module("test.css").code
+
+
+def test_source_map_can_be_disabled():
+    manager = CobrastyleManager(InMemoryResolver({"test.css": ".a { color: red; }"}), source_map=False)
+
+    assert manager.import_module("test.css").map is None
+
+
+def fake_bundle(modules):
+    """A bundle() stand-in that keeps cross-file composes as Dependency references.
+
+    lightningcss's bundler resolves composes-from-file itself (see test_assets),
+    so the manager's recursive Dependency linking can only be exercised this way.
+    """
+
+    def bundle(*, filename, provider, **kwargs):
+        code, exports = modules[filename]
+        return SimpleNamespace(
+            code=code,
+            exports={name: SimpleNamespace(name=name, composes=list(refs)) for name, refs in exports.items()},
+            dependencies=None,
+            map=None,
+            files=[filename],
+        )
+
+    return bundle
+
+
+def composes_from(name, specifier):
+    return CssModuleReference.Dependency(name=name, specifier=specifier)
+
+
+def use_fake_bundle(monkeypatch, modules) -> CobrastyleManager:
+    monkeypatch.setattr("cobrastyle.manager.bundle", fake_bundle(modules))
+    return CobrastyleManager(InMemoryResolver(dict.fromkeys(modules, "")))
+
+
+def test_dependency_reference_imports_the_composed_module(monkeypatch):
+    manager = use_fake_bundle(
+        monkeypatch,
+        {
+            "button.css": (".button {}", {"button": [composes_from("base", "./base.css")]}),
+            "base.css": (".base {}", {"base": []}),
+        },
+    )
+
+    stylesheet = manager.import_module("button.css")
+
+    assert stylesheet.classes["button"] == "button base"
+    assert stylesheet.composes == ("base.css",)
+    assert "base.css" in dict(stylesheet.dep_mtimes)
+    assert manager.get("base.css") is not None
+
+
+def test_dependency_reference_links_transitive_composes_base_first(monkeypatch):
+    manager = use_fake_bundle(
+        monkeypatch,
+        {
+            "button.css": (".button {}", {"button": [composes_from("base", "./base.css")]}),
+            "base.css": (".base {}", {"base": [composes_from("reset", "./reset.css")]}),
+            "reset.css": (".reset {}", {"reset": []}),
+        },
+    )
+
+    stylesheet = manager.import_module("button.css")
+
+    assert stylesheet.classes["button"] == "button base reset"
+    assert stylesheet.composes == ("reset.css", "base.css")
+
+
+def test_dependency_reference_to_missing_export_raises(monkeypatch):
+    manager = use_fake_bundle(
+        monkeypatch,
+        {
+            "button.css": (".button {}", {"button": [composes_from("nope", "./base.css")]}),
+            "base.css": (".base {}", {"base": []}),
+        },
+    )
+
+    with pytest.raises(KeyError, match="does not export a class named 'nope'"):
+        manager.import_module("button.css")
+
+
+def test_circular_composes_chain_raises(monkeypatch):
+    manager = use_fake_bundle(
+        monkeypatch,
+        {
+            "a.css": (".a {}", {"a": [composes_from("b", "./b.css")]}),
+            "b.css": (".b {}", {"b": [composes_from("a", "./a.css")]}),
+        },
+    )
+
+    with pytest.raises(ValueError, match="Circular composes chain"):
+        manager.import_module("a.css")
 
 
 def test_concurrent_imports_compile_once():

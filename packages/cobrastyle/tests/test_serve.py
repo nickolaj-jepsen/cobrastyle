@@ -1,8 +1,10 @@
 import asyncio
 import os
 
+import pytest
+
 from cobrastyle import CobrastyleManager, FileSystemResolver, InMemoryResolver
-from cobrastyle.serve import CobrastyleASGIApp, CobrastyleWSGIMiddleware, get_css, serve
+from cobrastyle.serve import CobrastyleASGIApp, CobrastyleWSGIMiddleware, get_css, get_resource, serve
 
 
 def test_get_css_compiles():
@@ -50,6 +52,34 @@ def test_etag_changes_with_content(tmp_path):
     assert first is not None
     assert second is not None
     assert first[1] != second[1]
+
+
+def test_serve_ignores_other_methods():
+    manager = CobrastyleManager(InMemoryResolver({"test.css": ".a { color: red; }"}))
+
+    assert serve(manager, "test.css", method="POST") is None
+
+
+def test_etag_hashes_content_when_the_resolver_has_no_mtime():
+    def etag_for(css):
+        manager = CobrastyleManager(InMemoryResolver({"test.css": css}), source_map=False)
+        result = serve(manager, "test.css")
+        assert result is not None
+        return dict(result.headers)["ETag"]
+
+    red = etag_for(".a { color: red; }")
+    assert red.startswith('W/"')
+    assert etag_for(".a { color: red; }") == red
+    assert etag_for(".a { color: blue; }") != red
+
+
+def test_raw_resource_unknown_extension_is_octet_stream():
+    manager = CobrastyleManager(InMemoryResolver({"font.xyzzy": "abc"}))
+
+    resource = get_resource(manager, "font.xyzzy")
+
+    assert resource is not None
+    assert resource.content_type == "application/octet-stream"
 
 
 def test_serve_head_has_headers_but_no_body():
@@ -130,8 +160,23 @@ def test_wsgi_middleware_serves_and_falls_through():
     assert body == b"fallback"
 
 
-def _asgi_request(app, method="GET", path="/test.css", headers=()):
-    scope = {"type": "http", "method": method, "path": path, "root_path": "", "headers": list(headers)}
+def test_wsgi_middleware_serves_raw_assets():
+    manager = CobrastyleManager(InMemoryResolver({"img/icon.svg": "<svg></svg>"}))
+
+    def fallback(environ, start_response):
+        start_response("404 Not Found", [])
+        return [b""]
+
+    app = CobrastyleWSGIMiddleware(fallback, manager, url_prefix="/static/")
+
+    status, headers, body = _wsgi_get(app, "/static/img/icon.svg")
+    assert status == "200 OK"
+    assert headers["Content-Type"] == "image/svg+xml"
+    assert body == b"<svg></svg>"
+
+
+def _asgi_request(app, method="GET", path="/test.css", headers=(), root_path=""):
+    scope = {"type": "http", "method": method, "path": path, "root_path": root_path, "headers": list(headers)}
     sent = []
 
     async def receive():
@@ -170,3 +215,37 @@ def test_asgi_app_rejects_other_methods():
     status, headers, _ = _asgi_request(app, method="POST")
     assert status == 405
     assert headers[b"allow"] == b"GET, HEAD"
+
+
+def test_asgi_app_serves_raw_assets():
+    manager = CobrastyleManager(InMemoryResolver({"icon.svg": "<svg></svg>"}))
+    app = CobrastyleASGIApp(manager)
+
+    status, headers, body = _asgi_request(app, path="/icon.svg")
+    assert status == 200
+    assert headers[b"content-type"] == b"image/svg+xml"
+    assert body == b"<svg></svg>"
+
+
+def test_asgi_app_strips_the_mount_root_path():
+    manager = CobrastyleManager(
+        InMemoryResolver({"test.css": ".a { color: red; }"}), module_pattern="[local]", minify=True, source_map=False
+    )
+    app = CobrastyleASGIApp(manager)
+
+    status, _, body = _asgi_request(app, path="/cobrastyle/test.css", root_path="/cobrastyle")
+    assert status == 200
+    assert body == b".a{color:red}"
+
+
+def test_asgi_app_rejects_non_http_scopes():
+    app = CobrastyleASGIApp(CobrastyleManager(InMemoryResolver({})))
+
+    async def receive():
+        return {}
+
+    async def send(message):
+        pass
+
+    with pytest.raises(RuntimeError, match="http"):
+        asyncio.run(app({"type": "websocket"}, receive, send))

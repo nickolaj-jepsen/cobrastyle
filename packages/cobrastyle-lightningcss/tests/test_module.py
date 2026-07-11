@@ -338,3 +338,73 @@ def test_bundle_circular_import_is_deduplicated():
     assert result.code.count(".a") == 1
     assert result.code.count(".b") == 1
     assert result.files == ["a.css", "b.css"]
+
+
+def test_module_composes_global():
+    result = transform(
+        filename="test.css", code=".x { composes: gname from global; }", module=True, module_pattern="[local]"
+    )
+
+    assert result.exports is not None
+    (reference,) = result.exports["x"].composes
+    assert isinstance(reference, CssModuleReference.Global)
+    assert reference.name == "gname"
+
+
+def test_module_composes_dependency():
+    result = transform(
+        filename="button.css",
+        code='.button { composes: base from "./base.css"; }',
+        module=True,
+        module_pattern="[local]",
+    )
+
+    assert result.exports is not None
+    (reference,) = result.exports["button"].composes
+    assert isinstance(reference, CssModuleReference.Dependency)
+    assert reference.name == "base"
+    assert reference.specifier == "./base.css"
+
+
+def test_transform_source_map_without_minify():
+    result = transform(filename="test.css", code=".a { color: red; }", source_map=True)
+
+    assert result.map is not None
+    assert json.loads(result.map)["mappings"]
+
+
+def test_bundle_targets_adds_vendor_prefixes():
+    provider = DictProvider({"entry.css": ".a { user-select: none; }"})
+    result = bundle(filename="entry.css", provider=provider, minify=True, targets=["safari >= 13"])
+
+    assert "-webkit-user-select" in result.code
+
+
+def test_bundle_module_pattern():
+    provider = DictProvider({"entry.css": ".a { color: red; }"})
+    result = bundle(filename="entry.css", provider=provider, module=True, module_pattern="x-[local]")
+
+    assert result.exports is not None
+    assert result.exports["a"].name == "x-a"
+
+
+def test_bundle_keeps_protocol_relative_and_fragment_imports():
+    provider = DictProvider(
+        {"entry.css": '@import "//example.com/reset.css"; @import "#anchor"; .entry { color: red; }'}
+    )
+    result = bundle(filename="entry.css", provider=provider, minify=True)
+
+    assert "//example.com/reset.css" in result.code
+    assert "#anchor" in result.code
+    assert result.files == ["entry.css"]
+
+
+def test_bundle_provider_resolve_exception_message_is_preserved():
+    class BadResolve(DictProvider):
+        def resolve(self, specifier: str, from_path: str) -> str:
+            raise ValueError(f"cannot resolve {specifier}")
+
+    provider = BadResolve({"entry.css": '@import "other.css";', "other.css": ""})
+
+    with pytest.raises(TransformError, match=r"cannot resolve other\.css"):
+        bundle(filename="entry.css", provider=provider)
