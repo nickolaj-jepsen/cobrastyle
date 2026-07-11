@@ -31,6 +31,7 @@ class ConfigureOptions(TypedDict, total=False):
     rewrite_class_names: bool
     module_pattern: str | None
     targets: list[str] | None
+    source_map: bool
 
 
 class ExtendedEnvironment(Environment):
@@ -45,6 +46,7 @@ class ExtendedEnvironment(Environment):
     cobrastyle_module_pattern: str | None
     cobrastyle_targets: list[str] | None
     cobrastyle_analyze_dependencies: bool
+    cobrastyle_source_map: bool
 
 
 def extended(environment: Environment) -> ExtendedEnvironment:
@@ -68,6 +70,7 @@ def configure(
     rewrite_class_names: bool = ...,
     module_pattern: str | None = ...,
     targets: list[str] | None = ...,
+    source_map: bool = ...,
 ) -> None: ...
 @overload
 def configure(
@@ -78,16 +81,18 @@ def configure(
     rewrite_class_names: bool = ...,
     module_pattern: str | None = ...,
     targets: list[str] | None = ...,
+    source_map: bool = ...,
 ) -> None: ...
 def configure(
     environment: Environment,
     *,
     resolver: FileResolver | None = None,
     manifest: Manifest | str | Path | None = None,
-    minify: bool = True,
+    minify: bool = False,
     rewrite_class_names: bool = True,
     module_pattern: str | None = None,
     targets: list[str] | None = None,
+    source_map: bool = True,
 ) -> None:
     """Configure cobrastyle on an environment using :class:`CobrastyleExtension`.
 
@@ -95,6 +100,10 @@ def configure(
     demand) or ``manifest`` (prod mode: class maps and URLs come from a
     prebuilt manifest, the compiler is never imported). Must be called
     before any template using ``{% cobrastyle %}`` is loaded.
+
+    ``minify`` and ``source_map`` only shape dev-served CSS — readable
+    output with a source map by default; the production build minifies
+    regardless.
 
     Dev mode rejects a ``bytecode_cache`` — a cache hit would silently skip
     the page tracking behind ``links()``; prod mode is cache-safe.
@@ -116,6 +125,7 @@ def configure(
     env.cobrastyle_rewrite_class_names = rewrite_class_names
     env.cobrastyle_module_pattern = module_pattern
     env.cobrastyle_targets = targets
+    env.cobrastyle_source_map = source_map
 
 
 class CobrastyleExtension(Extension):
@@ -140,11 +150,12 @@ class CobrastyleExtension(Extension):
         environment.extend(
             cobrastyle_resolver=None,
             cobrastyle_manifest=None,
-            cobrastyle_minify=True,
+            cobrastyle_minify=False,
             cobrastyle_rewrite_class_names=True,
             cobrastyle_module_pattern=None,
             cobrastyle_targets=None,
             cobrastyle_analyze_dependencies=False,
+            cobrastyle_source_map=True,
         )
         extended(environment).globals["cobrastyle"] = CobrastyleRuntime(self)
         extended(environment).globals[_PAGE_GLOBAL] = self._enter_page
@@ -182,6 +193,7 @@ class CobrastyleExtension(Extension):
                 rewrite_class_names=environment.cobrastyle_rewrite_class_names,
                 targets=environment.cobrastyle_targets,
                 analyze_dependencies=environment.cobrastyle_analyze_dependencies,
+                source_map=environment.cobrastyle_source_map,
             )
         return self._manager
 
@@ -256,11 +268,14 @@ class CobrastyleExtension(Extension):
 
     @pass_context
     def _enter_page(self, context: Context, page_id: str) -> str:
-        """Record the template's statically imported stylesheets in the render context."""
+        """Record the template's statically imported stylesheets in the render context.
+
+        Prepended: parent templates enter after the extending child, but
+        their (layout) modules must be linked first so a page module that
+        re-declares shared rules wins the cascade.
+        """
         used = context.vars.setdefault(_USED_KEY, [])
-        for path in self.page_modules(page_id):
-            if path not in used:
-                used.append(path)
+        used[:0] = [path for path in self.page_modules(page_id) if path not in used]
         return ""
 
 

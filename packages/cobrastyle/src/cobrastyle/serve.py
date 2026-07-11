@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import mimetypes
 from collections.abc import Awaitable, Callable, Iterable, MutableMapping
@@ -76,7 +77,11 @@ def get_css(manager: CobrastyleManager, path: str) -> tuple[str, str] | None:
         stylesheet = manager.import_module(path)
     except _RESOLVE_ERRORS:
         return None
-    return stylesheet.code, _etag(stylesheet)
+    code = stylesheet.code
+    if stylesheet.map is not None:
+        encoded = base64.b64encode(stylesheet.map.encode()).decode()
+        code = f"{code}\n/*# sourceMappingURL=data:application/json;base64,{encoded} */"
+    return code, _etag(stylesheet)
 
 
 def get_resource(manager: CobrastyleManager, path: str) -> Resource | None:

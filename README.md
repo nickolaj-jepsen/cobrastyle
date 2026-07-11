@@ -12,7 +12,9 @@ excellent performance provided by [LightningCSS](https://lightningcss.dev/).
 It has two modes:
 
 - **Dev mode** — stylesheets compile ad-hoc when a page renders, served from memory, fresh
-  on every refresh. No build step, no watcher.
+  on every refresh (edits to `@import`ed and composed-from files included). No build step,
+  no watcher. Output is readable and carries an inline source map, so devtools point at
+  the file you actually wrote.
 - **Prod mode** — `cobrastyle build` walks every template, compiles all stylesheets into a
   content-hashed static directory plus a `manifest.json`. The production runtime reads only
   the manifest: no compiler, no Rust wheel, near-zero overhead.
@@ -50,8 +52,10 @@ configure(env, resolver=FileSystemResolver("styles"))          # dev
 ```
 
 Class maps bake into the compiled template at load time; `cobrastyle.links()` renders
-`<link>` tags for every module the page (including inheriting children) imports.
-`composes: name from "./other.css"` works across files and links the composed module too.
+`<link>` tags for every module the page (including inheriting children) imports, parent
+templates' modules first so page rules win the cascade. `composes: name from "./other.css"`
+works across files, and `@import` works between modules — both bundle the referenced
+file's rules into the importing module's CSS.
 
 ### Flask
 
@@ -125,8 +129,6 @@ byte-identical output.
 - Stylesheets imported inside `{% include %}`d templates aren't seen by `links()` in the
   including page's head; pass them explicitly (`{% cobrastyle_links "shared/nav.css" %}` in
   DTL) or import them from the page template.
-- `@import` between CSS modules is a build error for now; import both modules from the
-  template instead.
 
 ## Development
 

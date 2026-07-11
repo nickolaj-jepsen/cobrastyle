@@ -95,8 +95,12 @@ def collect_jinja2(
     if build_env.loader is None:
         raise BuildError("The environment has no loader; there are no templates to build")
     # Force a fresh manager compiled with dependency analysis: url()/@import
-    # references become placeholders emit() resolves.
+    # references become placeholders emit() resolves. The build always emits
+    # production CSS — minified, no source maps — whatever the environment's
+    # dev-serving configuration says.
     extended(build_env).cobrastyle_analyze_dependencies = True
+    extended(build_env).cobrastyle_minify = True
+    extended(build_env).cobrastyle_source_map = False
     extension._manager = None
 
     pages: dict[str, list[str]] = {}

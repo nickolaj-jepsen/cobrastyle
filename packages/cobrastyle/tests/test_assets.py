@@ -17,13 +17,16 @@ def test_composes_from_other_file():
             "button.css": '.button { composes: base from "./base.css"; background: red; }',
         }
     )
-    manager = CobrastyleManager(resolver, module_pattern="[local]")
+    manager = CobrastyleManager(resolver, module_pattern="[local]", minify=True)
 
     stylesheet = manager.import_module("button.css")
 
     assert stylesheet.classes["button"] == "button base"
-    assert stylesheet.composes == ("base.css",)
-    assert manager.get("base.css") is not None
+    # The composed-from module is bundled in, its rules first so the composer wins the cascade
+    assert stylesheet.code.index(".base") < stylesheet.code.index(".button")
+    assert stylesheet.composes == ()
+    assert manager.get("base.css") is None
+    assert dict(stylesheet.dep_mtimes).keys() == {"base.css", "button.css"}
 
 
 def test_composes_transitive():
@@ -34,28 +37,34 @@ def test_composes_transitive():
             "button.css": '.button { composes: base from "./base.css"; }',
         }
     )
-    manager = CobrastyleManager(resolver, module_pattern="[local]")
+    manager = CobrastyleManager(resolver, module_pattern="[local]", minify=True)
 
     stylesheet = manager.import_module("button.css")
 
     assert stylesheet.classes["button"] == "button base reset"
-    assert stylesheet.composes == ("reset.css", "base.css")
+    assert dict(stylesheet.dep_mtimes).keys() == {"reset.css", "base.css", "button.css"}
+    code = stylesheet.code
+    assert code.index(".reset") < code.index(".base") < code.index(".button")
 
 
-def test_composes_cycle_is_an_error():
+def test_composes_cycle_bundles_each_module_once():
     resolver = InMemoryResolver(
         {
-            "a.css": '.a { composes: b from "./b.css"; }',
-            "b.css": '.b { composes: a from "./a.css"; }',
+            "a.css": '.a { composes: b from "./b.css"; color: red; }',
+            "b.css": '.b { composes: a from "./a.css"; color: blue; }',
         }
     )
-    manager = CobrastyleManager(resolver, module_pattern="[local]")
+    manager = CobrastyleManager(resolver, module_pattern="[local]", minify=True)
 
-    with pytest.raises(ValueError, match="Circular"):
-        manager.import_module("a.css")
+    stylesheet = manager.import_module("a.css")
+
+    assert stylesheet.code.count(".a") == 1
+    assert stylesheet.code.count(".b") == 1
 
 
-def test_composes_missing_class_is_an_error():
+def test_composes_missing_class_is_dropped():
+    # lightningcss's bundler resolves cross-file composes itself and silently
+    # drops references to classes the target does not export
     resolver = InMemoryResolver(
         {
             "base.css": ".base { color: black; }",
@@ -64,11 +73,10 @@ def test_composes_missing_class_is_an_error():
     )
     manager = CobrastyleManager(resolver, module_pattern="[local]")
 
-    with pytest.raises(KeyError, match="nope"):
-        manager.import_module("button.css")
+    assert manager.import_module("button.css").classes["button"] == "button"
 
 
-def test_links_include_composed_modules():
+def test_composed_modules_are_bundled_not_linked():
     from jinja2 import DictLoader
 
     environment = Environment(
@@ -92,8 +100,8 @@ def test_links_include_composed_modules():
 
     html = environment.get_template("page.html").render()
 
-    # Base first, so derived rules win the cascade
-    assert html == ('<link rel="stylesheet" href="base.css" /><link rel="stylesheet" href="button.css" />')
+    # base.css's rules ride along inside button.css; only the page's module is linked
+    assert html == '<link rel="stylesheet" href="button.css" />'
 
 
 @pytest.fixture
@@ -156,12 +164,18 @@ def test_build_missing_asset_fails(asset_project):
         build(make_environment(asset_project), output_dir=asset_project / "out")
 
 
-def test_build_rejects_import_between_modules(asset_project):
+def test_build_bundles_imports_between_modules(asset_project):
     (asset_project / "styles" / "other.css").write_text(".other { color: red; }")
     (asset_project / "styles" / "button.css").write_text('@import "other.css"; .button { color: blue; }')
+    out = asset_project / "out"
 
-    with pytest.raises(BuildError, match="@import"):
-        build(make_environment(asset_project), output_dir=asset_project / "out")
+    manifest = build(make_environment(asset_project), output_dir=out)
+
+    # The imported file is inlined, not emitted as a module of its own
+    assert set(manifest.modules) == {"button.css"}
+    built = (out / manifest.modules["button.css"].file).read_text()
+    assert "@import" not in built
+    assert built.index("color:red") < built.index("color:#00f")
 
 
 def test_dev_serves_raw_assets(asset_project):

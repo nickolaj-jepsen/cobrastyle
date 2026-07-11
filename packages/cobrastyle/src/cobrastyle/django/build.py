@@ -28,7 +28,10 @@ def collect_dtl(
     Compiling a DTL template fires ``{% cobrastyle %}`` at parse time; a
     temporary dev runtime with dependency analysis collects the modules.
     """
-    manager = CobrastyleManager(resolver, analyze_dependencies=True, **manager_options)
+    # The build always emits production CSS — minified, no source maps —
+    # whatever the dev-serving options say.
+    options: ConfigureOptions = {**manager_options, "minify": True, "source_map": False}
+    manager = CobrastyleManager(resolver, analyze_dependencies=True, **options)
     runtime = DTLRuntime(manager=manager)
     set_runtime(runtime)
     try:

@@ -6,7 +6,9 @@ from cobrastyle.serve import CobrastyleASGIApp, CobrastyleWSGIMiddleware, get_cs
 
 
 def test_get_css_compiles():
-    manager = CobrastyleManager(InMemoryResolver({"test.css": ".a { color: red; }"}), module_pattern="[local]")
+    manager = CobrastyleManager(
+        InMemoryResolver({"test.css": ".a { color: red; }"}), module_pattern="[local]", minify=True, source_map=False
+    )
 
     result = get_css(manager, "test.css")
 
@@ -14,6 +16,16 @@ def test_get_css_compiles():
     code, etag = result
     assert code == ".a{color:red}"
     assert etag.startswith('W/"')
+
+
+def test_get_css_appends_inline_source_map():
+    manager = CobrastyleManager(InMemoryResolver({"test.css": ".a { color: red; }"}), module_pattern="[local]")
+
+    result = get_css(manager, "test.css")
+
+    assert result is not None
+    code, _ = result
+    assert "/*# sourceMappingURL=data:application/json;base64," in code
 
 
 def test_get_css_rejects_non_css_and_missing():
@@ -41,7 +53,9 @@ def test_etag_changes_with_content(tmp_path):
 
 
 def test_serve_if_none_match_forms():
-    manager = CobrastyleManager(InMemoryResolver({"test.css": ".a { color: red; }"}), module_pattern="[local]")
+    manager = CobrastyleManager(
+        InMemoryResolver({"test.css": ".a { color: red; }"}), module_pattern="[local]", minify=True, source_map=False
+    )
     first = serve(manager, "test.css")
     assert first is not None
     etag = dict(first.headers)["ETag"]
@@ -75,7 +89,9 @@ def _wsgi_get(app, path, headers=None, method="GET"):
 
 
 def test_wsgi_middleware_serves_and_falls_through():
-    manager = CobrastyleManager(InMemoryResolver({"test.css": ".a { color: red; }"}), module_pattern="[local]")
+    manager = CobrastyleManager(
+        InMemoryResolver({"test.css": ".a { color: red; }"}), module_pattern="[local]", minify=True, source_map=False
+    )
 
     def fallback(environ, start_response):
         start_response("200 OK", [("Content-Type", "text/plain")])
@@ -116,7 +132,9 @@ def _asgi_request(app, method="GET", path="/test.css", headers=()):
 
 
 def test_asgi_app_serves_css():
-    manager = CobrastyleManager(InMemoryResolver({"test.css": ".a { color: red; }"}), module_pattern="[local]")
+    manager = CobrastyleManager(
+        InMemoryResolver({"test.css": ".a { color: red; }"}), module_pattern="[local]", minify=True, source_map=False
+    )
     app = CobrastyleASGIApp(manager)
 
     status, headers, body = _asgi_request(app)

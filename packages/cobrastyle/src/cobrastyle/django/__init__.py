@@ -27,6 +27,7 @@ class CobrastyleSettings(TypedDict, total=False):
     REWRITE_CLASS_NAMES: bool
     MODULE_PATTERN: str | None
     TARGETS: list[str] | None
+    SOURCE_MAP: bool
 
 
 def environment(**options: Any) -> Environment:
@@ -73,6 +74,8 @@ def common_options(config: CobrastyleSettings) -> ConfigureOptions:
         options["module_pattern"] = config["MODULE_PATTERN"]
     if "TARGETS" in config:
         options["targets"] = config["TARGETS"]
+    if "SOURCE_MAP" in config:
+        options["source_map"] = config["SOURCE_MAP"]
     return options
 
 

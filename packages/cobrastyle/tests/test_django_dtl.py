@@ -70,7 +70,7 @@ def test_class_name_rewrite(project):
         assert "1:header-title" in render("index.html")
 
 
-def test_composes_from_other_file_links_both(project):
+def test_composes_from_other_file_is_bundled(project):
     (project / "templates" / "index.html").write_text(
         '{% load cobrastyle %}{% cobrastyle "button.css" as styles %}'
         '{% cobrastyle_links %}<button class="{{ styles.button }}"></button>'
@@ -78,8 +78,10 @@ def test_composes_from_other_file_links_both(project):
     with override_settings(**project_settings(project)):
         html = render("index.html")
 
+    # The composed-from module's rules are bundled into button.css, not linked separately
     assert 'class="button base"' in html
-    assert html.index('href="/cobrastyle/base.css"') < html.index('href="/cobrastyle/button.css"')
+    assert 'href="/cobrastyle/button.css"' in html
+    assert "base.css" not in html
 
 
 def test_links_with_inherited_head(project):

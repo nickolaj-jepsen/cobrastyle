@@ -23,13 +23,92 @@ class CountingResolver:
 
 
 def test_import_module():
-    manager = CobrastyleManager(InMemoryResolver({"test.css": ".header { color: red; }"}), module_pattern="[local]")
+    manager = CobrastyleManager(
+        InMemoryResolver({"test.css": ".header { color: red; }"}), module_pattern="[local]", minify=True
+    )
     stylesheet = manager.import_module("test.css")
 
     assert stylesheet.path == "test.css"
     assert stylesheet.url == "test.css"
     assert stylesheet.classes == {"header": "header"}
     assert stylesheet.code == ".header{color:red}"
+
+
+def test_dev_defaults_are_debuggable():
+    manager = CobrastyleManager(InMemoryResolver({"test.css": ".header { color: red; }"}), module_pattern="[local]")
+    stylesheet = manager.import_module("test.css")
+
+    assert stylesheet.code.count("\n") > 0  # not minified
+    assert stylesheet.map is not None
+
+
+def test_imports_are_bundled():
+    manager = CobrastyleManager(
+        InMemoryResolver(
+            {
+                "entry.css": '@import "theme.css"; .entry { color: red; }',
+                "theme.css": ".themed { color: teal; }",
+            }
+        ),
+        module_pattern="[local]",
+        minify=True,
+    )
+
+    stylesheet = manager.import_module("entry.css")
+
+    assert "@import" not in stylesheet.code
+    assert stylesheet.code.index(".themed") < stylesheet.code.index(".entry")
+    assert dict(stylesheet.dep_mtimes).keys() == {"entry.css", "theme.css"}
+
+
+def test_imported_file_edit_recompiles(tmp_path):
+    (tmp_path / "entry.css").write_text('@import "theme.css"; .entry { color: red; }')
+    theme = tmp_path / "theme.css"
+    theme.write_text(".themed { color: teal; }")
+    for file in tmp_path.iterdir():
+        os.utime(file, (1000, 1000))
+    manager = CobrastyleManager(FileSystemResolver(tmp_path), minify=True)
+
+    first = manager.import_module("entry.css")
+    assert manager.import_module("entry.css") is first
+
+    theme.write_text(".themed { color: navy; }")
+    os.utime(theme, (2000, 2000))
+    second = manager.import_module("entry.css")
+
+    assert second is not first
+    assert "navy" in second.code
+
+
+def test_composed_file_edit_recompiles(tmp_path):
+    (tmp_path / "button.css").write_text('.button { composes: base from "./base.css"; }')
+    base = tmp_path / "base.css"
+    base.write_text(".base { color: black; }")
+    for file in tmp_path.iterdir():
+        os.utime(file, (1000, 1000))
+    manager = CobrastyleManager(FileSystemResolver(tmp_path), minify=True)
+
+    first = manager.import_module("button.css")
+    assert manager.import_module("button.css") is first
+
+    base.write_text(".base { color: gray; }")
+    os.utime(base, (2000, 2000))
+    second = manager.import_module("button.css")
+
+    assert second is not first
+    assert "gray" in second.code
+
+
+def test_deleted_dependency_recompiles_with_error(tmp_path):
+    (tmp_path / "entry.css").write_text('@import "theme.css"; .entry { color: red; }')
+    (tmp_path / "theme.css").write_text(".themed { color: teal; }")
+    manager = CobrastyleManager(FileSystemResolver(tmp_path))
+
+    manager.import_module("entry.css")
+    (tmp_path / "theme.css").unlink()
+
+    with pytest.raises(Exception, match=r"theme\.css"):
+        manager.import_module("entry.css")
 
 
 def test_import_module_is_cached():

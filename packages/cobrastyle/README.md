@@ -41,13 +41,14 @@ including through `{% extends %}`.
 
 Options for `configure()` (equivalently: set `cobrastyle_*`-prefixed attributes on the environment):
 
-| Option                | Default | Description                                          |
-| --------------------- | ------- | ---------------------------------------------------- |
-| `resolver`            | —       | Required. Resolves stylesheet paths to content/URLs. |
-| `minify`              | `True`  | Minify the compiled CSS.                             |
-| `rewrite_class_names` | `True`  | Also expose `hello-world` as `hello_world`.          |
-| `module_pattern`      | `None`  | Class name pattern, e.g. `[hash]-[local]`.           |
-| `targets`             | `None`  | Browserslist queries for vendor prefixing.           |
+| Option                | Default | Description                                              |
+| --------------------- | ------- | -------------------------------------------------------- |
+| `resolver`            | —       | Required. Resolves stylesheet paths to content/URLs.     |
+| `minify`              | `False` | Minify dev-served CSS (the build always minifies).       |
+| `rewrite_class_names` | `True`  | Also expose `hello-world` as `hello_world`.              |
+| `module_pattern`      | `None`  | Class name pattern, e.g. `[hash]-[local]`.               |
+| `targets`             | `None`  | Browserslist queries for vendor prefixing.               |
+| `source_map`          | `True`  | Serve dev CSS with an inline source map.                 |
 
 ### Caveats
 
