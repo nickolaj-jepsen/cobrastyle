@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use lightningcss::css_modules::{self, Pattern};
+use lightningcss::dependencies::{self, DependencyOptions};
 use lightningcss::printer::PrinterOptions;
 use lightningcss::stylesheet::{MinifyOptions, ParserOptions, StyleSheet, ToCssResult};
 use lightningcss::targets::{Browsers, Targets};
@@ -53,6 +54,65 @@ impl From<css_modules::CssModuleReference> for CssModuleReference {
     }
 }
 
+// from_py_object: the Dependency enum's generated constructors extract this field type
+#[pyclass(frozen, get_all, from_py_object)]
+#[derive(Clone, Debug)]
+pub struct SourceRange {
+    file_path: String,
+    start_line: u32,
+    start_column: u32,
+    end_line: u32,
+    end_column: u32,
+}
+
+impl From<dependencies::SourceRange> for SourceRange {
+    fn from(range: dependencies::SourceRange) -> Self {
+        Self {
+            file_path: range.file_path,
+            start_line: range.start.line,
+            start_column: range.start.column,
+            end_line: range.end.line,
+            end_column: range.end.column,
+        }
+    }
+}
+
+#[pyclass(frozen, skip_from_py_object)]
+#[derive(Clone, Debug)]
+pub enum Dependency {
+    Url {
+        url: String,
+        placeholder: String,
+        loc: SourceRange,
+    },
+    Import {
+        url: String,
+        placeholder: String,
+        supports: Option<String>,
+        media: Option<String>,
+        loc: SourceRange,
+    },
+}
+
+impl From<dependencies::Dependency> for Dependency {
+    fn from(dependency: dependencies::Dependency) -> Self {
+        match dependency {
+            dependencies::Dependency::Url(url) => Self::Url {
+                url: url.url,
+                placeholder: url.placeholder,
+                loc: url.loc.into(),
+            },
+            dependencies::Dependency::Import(import) => Self::Import {
+                url: import.url,
+                placeholder: import.placeholder,
+                supports: import.supports,
+                media: import.media,
+                loc: import.loc.into(),
+            },
+        }
+    }
+}
+
 #[pyclass(frozen, get_all, skip_from_py_object)]
 #[derive(Clone, Debug)]
 pub struct TransformResult {
@@ -60,6 +120,8 @@ pub struct TransformResult {
     code: String,
     /// CSS module exports, if enabled.
     exports: Option<HashMap<String, CssModuleExport>>,
+    /// `url()` and `@import` dependencies, if analysis was enabled.
+    dependencies: Option<Vec<Dependency>>,
 }
 
 impl From<ToCssResult> for TransformResult {
@@ -72,6 +134,9 @@ impl From<ToCssResult> for TransformResult {
                     .map(|(name, export)| (name, export.into()))
                     .collect()
             }),
+            dependencies: result
+                .dependencies
+                .map(|dependencies| dependencies.into_iter().map(Into::into).collect()),
         }
     }
 }
@@ -96,8 +161,11 @@ fn transform_error(context: &str, error: impl std::fmt::Display) -> PyErr {
         module_pattern = None,
         minify = false,
         targets = None,
+        analyze_dependencies = false,
+        remove_imports = false,
     ),
 )]
+#[allow(clippy::fn_params_excessive_bools, clippy::too_many_arguments)]
 pub fn transform(
     py: Python<'_>,
     filename: String,
@@ -106,6 +174,8 @@ pub fn transform(
     module_pattern: Option<String>,
     minify: bool,
     targets: Option<Vec<String>>,
+    analyze_dependencies: bool,
+    remove_imports: bool,
 ) -> PyResult<TransformResult> {
     py.detach(move || {
         let browsers = match &targets {
@@ -150,6 +220,8 @@ pub fn transform(
             .to_css(PrinterOptions {
                 minify,
                 targets,
+                analyze_dependencies: analyze_dependencies
+                    .then_some(DependencyOptions { remove_imports }),
                 ..Default::default()
             })
             .map(TransformResult::from)
@@ -163,7 +235,10 @@ fn cobrastyle_lightningcss(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<TransformResult>()?;
     m.add_class::<CssModuleExport>()?;
     m.add_class::<CssModuleReference>()?;
+    m.add_class::<Dependency>()?;
+    m.add_class::<SourceRange>()?;
     m.add("TransformError", m.py().get_type::<TransformError>())?;
+    m.add("LIGHTNINGCSS_VERSION", env!("LIGHTNINGCSS_VERSION"))?;
 
     Ok(())
 }

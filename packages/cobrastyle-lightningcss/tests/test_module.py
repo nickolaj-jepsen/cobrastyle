@@ -1,6 +1,8 @@
+import re
+
 import pytest
 
-from cobrastyle_lightningcss import CssModuleReference, TransformError, transform
+from cobrastyle_lightningcss import LIGHTNINGCSS_VERSION, CssModuleReference, Dependency, TransformError, transform
 
 
 def _remove_whitespace(text: str) -> str:
@@ -75,3 +77,50 @@ def test_invalid_module_pattern():
 def test_invalid_targets():
     with pytest.raises(TransformError, match="targets"):
         transform(filename="test.css", code=".a {}", targets=["not a real browser query %%"])
+
+
+def test_lightningcss_version_is_exposed():
+    assert re.match(r"^\d+\.\d+\.\d+", LIGHTNINGCSS_VERSION)
+
+
+def test_analyze_dependencies_off_by_default():
+    result = transform(filename="test.css", code=".a { background: url(icon.svg); }")
+    assert result.dependencies is None
+    assert "icon.svg" in result.code
+
+
+def test_analyze_dependencies_url():
+    result = transform(filename="test.css", code=".a { background: url(img/icon.svg); }", analyze_dependencies=True)
+
+    assert result.dependencies is not None
+    (dependency,) = result.dependencies
+    assert isinstance(dependency, Dependency.Url)
+    assert dependency.url == "img/icon.svg"
+    assert dependency.placeholder in result.code
+    assert "img/icon.svg" not in result.code
+    assert dependency.loc.file_path == "test.css"
+
+
+def test_analyze_dependencies_import():
+    result = transform(filename="test.css", code='@import "other.css"; .a { color: red; }', analyze_dependencies=True)
+
+    assert result.dependencies is not None
+    (dependency,) = result.dependencies
+    assert isinstance(dependency, Dependency.Import)
+    assert dependency.url == "other.css"
+    assert dependency.placeholder in result.code
+
+
+def test_remove_imports():
+    result = transform(
+        filename="test.css",
+        code='@import "other.css"; .a { color: red; }',
+        analyze_dependencies=True,
+        remove_imports=True,
+    )
+
+    assert "@import" not in result.code
+    assert result.dependencies is not None
+    (dependency,) = result.dependencies
+    assert isinstance(dependency, Dependency.Import)
+    assert dependency.url == "other.css"
