@@ -31,3 +31,23 @@ def page_project(tmp_path):
     os.utime(tmp_path / "styles" / "page.css", (1000, 1000))
     (tmp_path / "templates" / "index.html").write_text(PAGE_TEMPLATE)
     return tmp_path
+
+
+def pytest_configure(config):
+    try:
+        import django
+        from django.conf import settings
+    except ImportError:
+        return
+    if not settings.configured:
+        settings.configure(
+            DEBUG=True,
+            SECRET_KEY="test-only",
+            ALLOWED_HOSTS=["testserver"],
+            INSTALLED_APPS=["django.contrib.staticfiles", "cobrastyle.django"],
+            DATABASES={},
+            TEMPLATES=[],
+            STATIC_URL="/static/",
+            USE_TZ=True,
+        )
+        django.setup()
