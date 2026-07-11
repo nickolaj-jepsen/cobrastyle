@@ -153,6 +153,25 @@ def test_django_example(copy_example, monkeypatch):
             call_command("collectstatic", interactive=False, verbosity=0)
         collected = project / "static_root" / manifest.modules["index.css"].url.removeprefix("/static/")
         assert collected.exists()
+        # The finder ships the build output but never its manifest
+        assert not (project / "static_root" / "cobrastyle" / "manifest.json").exists()
+
+        # Under a hashed storage the same pages serve storage-hashed URLs, both engines
+        set_runtime(None)
+        with override_settings(
+            **{**overrides, "DEBUG": False},
+            STORAGES={
+                "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+                "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.ManifestStaticFilesStorage"},
+            },
+        ):
+            call_command("collectstatic", interactive=False, verbosity=0, clear=True)
+            client = Client()
+            for page, module in [("/", "index.css"), ("/about/", "about.css")]:
+                html = client.get(page).content.decode()
+                href = next(h for h in css_hrefs(html) if module.removesuffix(".css") in h)
+                assert href != manifest.modules[module].url
+                assert (project / "static_root" / href.removeprefix("/static/")).exists()
     finally:
         set_runtime(None)
         for name in [name for name in sys.modules if name == "demo" or name.startswith("demo.")]:

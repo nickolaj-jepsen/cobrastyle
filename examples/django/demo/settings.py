@@ -32,8 +32,12 @@ TEMPLATES = [
 
 STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "static_root"
-# The tuple prefix places the build output where the manifest URLs point (/static/cobrastyle/)
-STATICFILES_DIRS = [("cobrastyle", BASE_DIR / "cobrastyle_static" / "cobrastyle")]
+# The cobrastyle finder hands the build output to collectstatic (and runserver --insecure)
+STATICFILES_FINDERS = [
+    "django.contrib.staticfiles.finders.FileSystemFinder",
+    "django.contrib.staticfiles.finders.AppDirectoriesFinder",
+    "cobrastyle.django.finders.CobrastyleFinder",
+]
 
 # COBRASTYLE defaults do the rest: dev compiles BASE_DIR/styles when DEBUG,
 # prod reads BASE_DIR/cobrastyle_static/cobrastyle/manifest.json

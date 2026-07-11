@@ -102,15 +102,38 @@ Django Template Language works too — same modules, same build:
 <button class="{{ styles.button }}"></button>
 ```
 
-Build for production with `manage.py cobrastyle_build` (covers Jinja2 and DTL templates);
-register the output via a prefixed `STATICFILES_DIRS` entry so `collectstatic` ships it:
+Deploying is two steps: build, then collect. The finder hands the build output to
+`collectstatic` — except `manifest.json`, which the app reads from the output directory
+at startup, so ship that directory with the app even when static files live elsewhere:
 
 ```python
-STATICFILES_DIRS = [("cobrastyle", BASE_DIR / "cobrastyle_static" / "cobrastyle")]
+STATICFILES_FINDERS = [
+    "django.contrib.staticfiles.finders.FileSystemFinder",
+    "django.contrib.staticfiles.finders.AppDirectoriesFinder",
+    "cobrastyle.django.finders.CobrastyleFinder",
+]
 ```
 
-Cobrastyle owns its URLs (`STATIC_URL + "cobrastyle/"`); keep the already-hashed output out
-of `ManifestStaticFilesStorage` re-hashing.
+```sh
+manage.py cobrastyle_build   # covers Jinja2 and DTL templates in one pass
+manage.py collectstatic
+```
+
+In prod, `<link>` URLs resolve through Django's `static()` and `url()` references inside
+built CSS are relative — hashed storages (`ManifestStaticFilesStorage`, WhiteNoise's
+compressed variant) and CDN `STATIC_URL`s apply with no further config. To keep the URLs
+baked at build time instead, set `COBRASTYLE["BUILD_URL_PREFIX"]` (or
+`"STATIC_PREFIX": None` to disable the staticfiles integration entirely).
+
+With [WhiteNoise](https://whitenoise.readthedocs.io/) on **plain** static storage, add
+far-future caching for cobrastyle's content-hashed files:
+
+```python
+from cobrastyle.django import immutable_file_test
+WHITENOISE_IMMUTABLE_FILE_TEST = immutable_file_test
+```
+
+(Hashed storages need no help — WhiteNoise already recognizes their names.)
 
 ### Building (non-Django)
 
