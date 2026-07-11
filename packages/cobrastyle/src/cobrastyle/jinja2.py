@@ -12,12 +12,14 @@ from jinja2.parser import Parser
 from jinja2.runtime import Context
 from markupsafe import Markup
 
-from cobrastyle.manifest import Manifest
+from cobrastyle.manifest import Manifest, ModuleEntry
 from cobrastyle.paths import normalize_path
 from cobrastyle.resolvers import FileResolver
 from cobrastyle.source import StylesheetNotFoundError, StyleSource
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from cobrastyle.manager import CobrastyleManager
 
 _USED_KEY = "_cobrastyle_used"
@@ -41,6 +43,7 @@ class ExtendedEnvironment(Environment):
     globals: dict[str, Any]
     cobrastyle_resolver: FileResolver | None
     cobrastyle_manifest: Manifest | None
+    cobrastyle_url_map: Callable[[ModuleEntry], str] | None
     cobrastyle_minify: bool
     cobrastyle_rewrite_class_names: bool
     cobrastyle_module_pattern: str | None
@@ -77,6 +80,7 @@ def configure(
     environment: Environment,
     *,
     manifest: Manifest | str | Path,
+    url_map: Callable[[ModuleEntry], str] | None = ...,
     minify: bool = ...,
     rewrite_class_names: bool = ...,
     module_pattern: str | None = ...,
@@ -88,6 +92,7 @@ def configure(
     *,
     resolver: FileResolver | None = None,
     manifest: Manifest | str | Path | None = None,
+    url_map: Callable[[ModuleEntry], str] | None = None,
     minify: bool = False,
     rewrite_class_names: bool = True,
     module_pattern: str | None = None,
@@ -101,6 +106,10 @@ def configure(
     prebuilt manifest, the compiler is never imported). Must be called
     before any template using ``{% cobrastyle %}`` is loaded.
 
+    ``url_map`` (manifest mode only) derives each module's URL from its
+    manifest entry instead of the one baked in at build time — for serving
+    through a static-file pipeline that owns URL generation.
+
     ``minify`` and ``source_map`` only shape dev-served CSS — readable
     output with a source map by default; the production build minifies
     regardless. ``module_pattern=None`` follows the same split: readable
@@ -112,6 +121,8 @@ def configure(
     """
     if (resolver is None) == (manifest is None):
         raise TypeError("Pass exactly one of resolver= (dev mode) or manifest= (prod mode)")
+    if url_map is not None and manifest is None:
+        raise TypeError("url_map= only applies to manifest mode; dev URLs come from the manager")
     if resolver is not None and environment.bytecode_cache is not None:
         raise RuntimeError(
             "cobrastyle dev mode is incompatible with a bytecode_cache: cache hits skip "
@@ -123,6 +134,7 @@ def configure(
     env = extended(environment)
     env.cobrastyle_resolver = resolver
     env.cobrastyle_manifest = manifest
+    env.cobrastyle_url_map = url_map
     env.cobrastyle_minify = minify
     env.cobrastyle_rewrite_class_names = rewrite_class_names
     env.cobrastyle_module_pattern = module_pattern
@@ -152,6 +164,7 @@ class CobrastyleExtension(Extension):
         environment.extend(
             cobrastyle_resolver=None,
             cobrastyle_manifest=None,
+            cobrastyle_url_map=None,
             cobrastyle_minify=False,
             cobrastyle_rewrite_class_names=True,
             cobrastyle_module_pattern=None,
@@ -249,7 +262,7 @@ class CobrastyleExtension(Extension):
         """The current-mode resolution source; built per access so reconfiguration takes effect."""
         manifest = self.manifest
         if manifest is not None:
-            return StyleSource(manifest=manifest)
+            return StyleSource(manifest=manifest, url_map=extended(self.environment).cobrastyle_url_map)
         return StyleSource(manager=self.manager)
 
     def stylesheet_url(self, path: str) -> str:

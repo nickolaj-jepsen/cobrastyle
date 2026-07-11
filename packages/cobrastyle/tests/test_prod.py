@@ -109,6 +109,38 @@ def test_configure_requires_exactly_one_mode(built_project):
         )
 
 
+def test_url_map_rewrites_link_urls(built_project):
+    environment = Environment(loader=FileSystemLoader(built_project / "templates"), extensions=[CobrastyleExtension])
+    configure(
+        environment,
+        manifest=built_project / "dist" / "manifest.json",
+        url_map=lambda entry: f"https://cdn.example.com/assets/{entry.file}",
+    )
+    manifest = Manifest.load(built_project / "dist" / "manifest.json")
+
+    html = environment.get_template("index.html").render()
+
+    hrefs = re.findall(r'href="([^"]+)"', html)
+    assert hrefs == [
+        f"https://cdn.example.com/assets/{manifest.modules['base.css'].file}",
+        f"https://cdn.example.com/assets/{manifest.modules['page.css'].file}",
+    ]
+    # Class maps are untouched by URL mapping
+    assert manifest.modules["page.css"].classes["title"] in html
+
+
+def test_url_map_requires_manifest_mode(built_project):
+    environment = Environment(extensions=[CobrastyleExtension])
+    untyped_configure = cast(Any, configure)
+
+    with pytest.raises(TypeError, match="url_map"):
+        untyped_configure(
+            environment,
+            resolver=FileSystemResolver(built_project / "styles"),
+            url_map=lambda entry: entry.url,
+        )
+
+
 def test_flask_prod_mode(built_project):
     flask = pytest.importorskip("flask")
     from cobrastyle.flask import Cobrastyle
