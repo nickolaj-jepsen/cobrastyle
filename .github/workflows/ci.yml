@@ -29,10 +29,19 @@ jobs:
       - run: cargo clippy --manifest-path packages/cobrastyle-lightningcss/Cargo.toml --all-targets -- -D warnings
 
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       matrix:
+        os: [ubuntu-latest]
         python-version: ["3.12", "3.13", "3.14"]
+        # One leg per extra OS: platform breakage (paths, mtimes, file locking)
+        # is Python-version-independent, and 3.12 is both the floor and the
+        # abi3 wheel target.
+        include:
+          - os: windows-latest
+            python-version: "3.12"
+          - os: macos-latest
+            python-version: "3.12"
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
