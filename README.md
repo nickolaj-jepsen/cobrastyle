@@ -2,20 +2,130 @@
 _CSS modules for Python_
 
 > [!WARNING]
-> In active development! Still in exploratory phase, APIs **WILL** change.
+> In active development! APIs may still change before 1.0.
 
 ## Description
 
-Cobrastyle provides CSS modules support for Python and various Python based template engines and frameworks, with excellent performance provided by [LightningCSS](https://lightningcss.dev/).
+Cobrastyle provides CSS modules support for Python template engines and frameworks, with
+excellent performance provided by [LightningCSS](https://lightningcss.dev/).
 
-## Current packages:
+It has two modes:
 
-- [cobrastyle](./packages/cobrastyle): CSS modules for Python, with a Jinja2 extension (`cobrastyle[jinja2]`)
+- **Dev mode** — stylesheets compile ad-hoc when a page renders, served from memory, fresh
+  on every refresh. No build step, no watcher.
+- **Prod mode** — `cobrastyle build` walks every template, compiles all stylesheets into a
+  content-hashed static directory plus a `manifest.json`. The production runtime reads only
+  the manifest: no compiler, no Rust wheel, near-zero overhead.
+
+## Packages
+
+- [cobrastyle](./packages/cobrastyle): CSS modules for Python. Extras: `[jinja2]`, `[flask]`,
+  `[fastapi]`, `[django]`, `[cli]`
 - [cobrastyle-lightningcss](./packages/cobrastyle-lightningcss): Python bindings for LightningCSS
+
+## Usage
+
+### Jinja2
+
+```python
+from jinja2 import Environment, FileSystemLoader
+from cobrastyle import FileSystemResolver
+from cobrastyle.jinja2 import CobrastyleExtension, configure
+
+env = Environment(loader=FileSystemLoader("templates"), extensions=[CobrastyleExtension])
+configure(env, resolver=FileSystemResolver("styles"))          # dev
+# configure(env, manifest="dist/manifest.json")                # prod
+```
+
+```jinja
+<head>{{ cobrastyle.links() }}</head>
+{% cobrastyle styles = "button.css" %}
+<button class="{{ styles.button }}">Click me</button>
+```
+
+Class maps bake into the compiled template at load time; `cobrastyle.links()` renders
+`<link>` tags for every module the page (including inheriting children) imports.
+`composes: name from "./other.css"` works across files and links the composed module too.
+
+### Flask
+
+```python
+from cobrastyle.flask import Cobrastyle
+
+app = Flask(__name__)
+Cobrastyle(app)                                   # dev: <root>/styles served at /cobrastyle/
+# Cobrastyle(app, manifest="dist/manifest.json")  # prod
+```
+
+### FastAPI / Starlette
+
+```python
+from cobrastyle.fastapi import install
+
+templates = Jinja2Templates(directory="templates")
+install(templates, app, root="styles")                     # dev: mounts a CSS server at /cobrastyle/
+# install(templates, app, manifest="dist/manifest.json")   # prod
+```
+
+### Django
+
+```python
+# settings.py
+TEMPLATES = [{
+    "BACKEND": "django.template.backends.jinja2.Jinja2",
+    "DIRS": [BASE_DIR / "templates"],
+    "OPTIONS": {"environment": "cobrastyle.django.environment"},
+}]
+INSTALLED_APPS = [..., "cobrastyle.django"]
+COBRASTYLE = {"ROOT": BASE_DIR / "styles"}   # dev/prod follows DEBUG; override with "DEV"
+
+# urls.py (dev serving, DEBUG only)
+path("cobrastyle/", include("cobrastyle.django.urls")),
+```
+
+Django Template Language works too — same modules, same build:
+
+```django
+{% load cobrastyle %}
+{% cobrastyle "button.css" as styles %}
+<head>{% cobrastyle_links %}</head>
+<button class="{{ styles.button }}"></button>
+```
+
+Build for production with `manage.py cobrastyle_build` (covers Jinja2 and DTL templates);
+register the output via a prefixed `STATICFILES_DIRS` entry so `collectstatic` ships it:
+
+```python
+STATICFILES_DIRS = [("cobrastyle", BASE_DIR / "cobrastyle_static" / "cobrastyle")]
+```
+
+Cobrastyle owns its URLs (`STATIC_URL + "cobrastyle/"`); keep the already-hashed output out
+of `ManifestStaticFilesStorage` re-hashing.
+
+### Building (non-Django)
+
+```sh
+cobrastyle build myapp:create_environment --out dist --url-prefix /static/
+```
+
+The target is adapted by type: a `jinja2.Environment`, a Flask app, a `Jinja2Templates`
+instance, or a zero-arg factory returning any of these. The output directory contains
+content-hashed CSS (plus any `url()` assets, rewritten) and `manifest.json` — the sole
+input the prod runtime needs. Builds are deterministic: unchanged input produces
+byte-identical output.
+
+### Known limitations
+
+- Stylesheets imported inside `{% include %}`d templates aren't seen by `links()` in the
+  including page's head; pass them explicitly (`{% cobrastyle_links "shared/nav.css" %}` in
+  DTL) or import them from the page template.
+- `@import` between CSS modules is a build error for now; import both modules from the
+  template instead.
 
 ## Development
 
-The dev environment is managed with [Nix](https://nixos.org/) (`nix develop`) and [uv](https://docs.astral.sh/uv/). Common tasks are wrapped in a [justfile](./justfile):
+The dev environment is managed with [Nix](https://nixos.org/) (`nix develop`) and
+[uv](https://docs.astral.sh/uv/). Common tasks are wrapped in a [justfile](./justfile):
 
 ```sh
 just sync       # set up the virtualenv (builds the Rust extension)
@@ -25,12 +135,3 @@ just typecheck  # pyrefly
 just fmt        # auto-format everything
 just check      # everything CI runs
 ```
-
-## Missing features:
-- [ ] Serving compiled CSS (dev middleware / production build step)
-- [ ] Support for other template engines and frameworks
-  - [ ] Django
-  - [ ] Flask (via Jinja2)
-  - [ ] FastAPI (via Jinja2)
-- [ ] Support for inline CSS modules in templates
-- [ ] `composes` from other files
