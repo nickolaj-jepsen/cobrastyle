@@ -75,6 +75,36 @@ def test_build_is_deterministic(project):
     assert first == second
 
 
+def test_rebuild_without_clean_accumulates_stale_files(project):
+    out = project / "out"
+    build(make_environment(project), output_dir=out)
+    stale = next((out / "styles").glob("page.*.css"))
+
+    (project / "styles" / "styles" / "page.css").write_text(".title { color: green; }")
+    build(make_environment(project), output_dir=out)
+
+    assert stale.exists()
+
+
+def test_clean_removes_only_previously_built_files(project):
+    out = project / "out"
+    build(make_environment(project), output_dir=out)
+    stale = next((out / "styles").glob("page.*.css"))
+    keep = out / "logo.png"
+    keep.write_bytes(b"not ours")
+    (out / "empty").mkdir()
+    (out / "empty" / "old.0123456789.css").write_text("stale")
+
+    (project / "styles" / "styles" / "page.css").write_text(".title { color: green; }")
+    manifest = build(make_environment(project), output_dir=out, clean=True)
+
+    assert not stale.exists()
+    assert not (out / "empty").exists()
+    assert keep.read_bytes() == b"not ours"
+    fresh = out / manifest.modules["styles/page.css"].file
+    assert "green" in fresh.read_text()
+
+
 def test_broken_template_without_cobrastyle_is_skipped(project, caplog):
     (project / "templates" / "broken.html").write_text("{% block %}")
     environment = make_environment(project)

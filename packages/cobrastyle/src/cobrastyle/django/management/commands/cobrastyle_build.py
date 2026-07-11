@@ -30,6 +30,11 @@ class Command(BaseCommand):
             help="Extra template names the loader cannot enumerate (Jinja2 backend only).",
         )
         parser.add_argument("--strict", action="store_true", help="Fail on any template compile error.")
+        parser.add_argument(
+            "--clean",
+            action="store_true",
+            help="First delete previously built files (hashed names and manifest.json; other files survive).",
+        )
 
     def handle(self, *args: Any, **options: Any) -> None:
         jinja_env = None
@@ -79,7 +84,14 @@ class Command(BaseCommand):
                 pages.update(collected.pages)
                 stylesheets.update({sheet.path: sheet for sheet in collected.stylesheets})
 
-            manifest = emit(list(stylesheets.values()), resolver, pages, output_dir=out, url_prefix=url_prefix)
+            manifest = emit(
+                list(stylesheets.values()),
+                resolver,
+                pages,
+                output_dir=out,
+                url_prefix=url_prefix,
+                clean=options["clean"],
+            )
         except BuildError as exc:
             raise CommandError(str(exc)) from exc
 

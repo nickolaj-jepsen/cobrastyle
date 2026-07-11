@@ -86,6 +86,11 @@ def cli() -> None:
 )
 @click.option("--template", "extra_templates", multiple=True, help="Extra template names the loader cannot enumerate.")
 @click.option("--strict", is_flag=True, help="Fail on any template compile error, cobrastyle or not.")
+@click.option(
+    "--clean",
+    is_flag=True,
+    help="First delete previously built files (hashed names and manifest.json; other files survive).",
+)
 def build_command(
     target: str,
     output_dir: Path,
@@ -93,6 +98,7 @@ def build_command(
     globs: tuple[str, ...],
     extra_templates: tuple[str, ...],
     strict: bool,
+    clean: bool,
 ) -> None:
     """Build production CSS and manifest for TARGET (package.module:attribute)."""
     if "" not in sys.path and "." not in sys.path:
@@ -106,6 +112,7 @@ def build_command(
             globs=globs or DEFAULT_GLOBS,
             strict=strict,
             extra_templates=extra_templates,
+            clean=clean,
         )
     except BuildError as exc:
         raise click.ClickException(str(exc)) from exc

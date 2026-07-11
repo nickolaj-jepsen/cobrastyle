@@ -56,6 +56,7 @@ def build(
     globs: tuple[str, ...] = DEFAULT_GLOBS,
     strict: bool = False,
     extra_templates: tuple[str, ...] = (),
+    clean: bool = False,
 ) -> Manifest:
     """Compile every template's stylesheets and write hashed CSS + ``manifest.json`` to ``output_dir``.
 
@@ -65,11 +66,17 @@ def build(
     always run. A template that fails to compile is skipped with a warning
     unless it mentions cobrastyle or ``strict`` is set — then it's a
     :class:`BuildError`. Output is deterministic: identical input produces
-    byte-identical files.
+    byte-identical files. ``clean`` removes previously built files first;
+    see :func:`emit`.
     """
     collected = collect_jinja2(environment, globs=globs, strict=strict, extra_templates=extra_templates)
     return emit(
-        collected.stylesheets, collected.resolver, collected.pages, output_dir=output_dir, url_prefix=url_prefix
+        collected.stylesheets,
+        collected.resolver,
+        collected.pages,
+        output_dir=output_dir,
+        url_prefix=url_prefix,
+        clean=clean,
     )
 
 
@@ -119,10 +126,18 @@ def emit(
     *,
     output_dir: str | Path,
     url_prefix: str = "/static/",
+    clean: bool = False,
 ) -> Manifest:
-    """Write hashed CSS files, url() assets and ``manifest.json`` to ``output_dir``."""
+    """Write hashed CSS files, url() assets and ``manifest.json`` to ``output_dir``.
+
+    ``clean`` first deletes previously built files — hashed names and
+    ``manifest.json`` only, so user files sharing the directory survive.
+    Leave it off when old hashes must outlive a rolling deploy.
+    """
     prefix = url_prefix if url_prefix.endswith("/") else url_prefix + "/"
     output = Path(output_dir)
+    if clean:
+        _clean_output(output)
     manifest = Manifest(generator=_generator_versions(), pages=pages)
 
     for stylesheet in sorted(stylesheets, key=lambda s: s.path):
@@ -147,6 +162,23 @@ def _hashed_name(path: str, data: bytes) -> str:
     digest = hashlib.sha256(data).hexdigest()[:10]
     source_path = PurePosixPath(path)
     return str(source_path.parent / f"{source_path.stem}.{digest}{source_path.suffix}")
+
+
+# What _hashed_name produces; _clean_output must never match anything else
+_HASHED_NAME = re.compile(r"\.[0-9a-f]{10}\.\w+$")
+
+
+def _clean_output(output: Path) -> None:
+    if not output.is_dir():
+        return
+    (output / "manifest.json").unlink(missing_ok=True)
+    # A parent sorts before its children, so the reverse walk empties directories bottom-up
+    for path in sorted(output.rglob("*"), reverse=True):
+        if path.is_file():
+            if _HASHED_NAME.search(path.name):
+                path.unlink()
+        elif path.is_dir() and not any(path.iterdir()):
+            path.rmdir()
 
 
 def _resolve_assets(
