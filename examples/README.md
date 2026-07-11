@@ -9,8 +9,9 @@ Three self-contained example apps, each a small two-page site that runs in dev m
 - [django/](./django) — one project running the Jinja2 backend and the DTL tag library side by side,
   built with `manage.py cobrastyle_build` and shipped through `collectstatic`
 
-All three demonstrate cross-file `composes` (a shared `base.css` primitive) and a `url()`
-asset flowing through dev serving and the hashed prod build.
+All three demonstrate cross-file `composes` (a shared `base.css` primitive), `@import`
+between modules (a `theme.css` bundled into `about.css`), and a `url()` asset flowing
+through dev serving and the hashed prod build.
 
 Setup once from the repo root (builds the Rust extension):
 

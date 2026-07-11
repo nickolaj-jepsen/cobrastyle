@@ -17,7 +17,7 @@ Django warns that the `STATICFILES_DIRS` entry doesn't exist yet — harmless.)
 ## Prod mode
 
 ```sh
-uv run python manage.py cobrastyle_build
+uv run python manage.py cobrastyle_build --clean
 DJANGO_DEBUG=0 uv run python manage.py runserver --insecure
 ```
 

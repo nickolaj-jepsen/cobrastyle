@@ -52,6 +52,21 @@ def test_etag_changes_with_content(tmp_path):
     assert first[1] != second[1]
 
 
+def test_serve_head_has_headers_but_no_body():
+    manager = CobrastyleManager(
+        InMemoryResolver({"test.css": ".a { color: red; }"}), module_pattern="[local]", minify=True, source_map=False
+    )
+
+    result = serve(manager, "test.css", method="HEAD")
+
+    assert result is not None
+    assert result.status == 200
+    assert result.body == b""
+    headers = dict(result.headers)
+    assert headers["Content-Length"] == str(len(b".a{color:red}"))
+    assert headers["ETag"]
+
+
 def test_serve_if_none_match_forms():
     manager = CobrastyleManager(
         InMemoryResolver({"test.css": ".a { color: red; }"}), module_pattern="[local]", minify=True, source_map=False

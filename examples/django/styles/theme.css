@@ -1,0 +1,7 @@
+/* Pulled in with @import from about.css — bundled into that module's CSS. */
+code {
+  padding: 0.1rem 0.35rem;
+  border-radius: 0.25rem;
+  background: #e2e8f0;
+  font-size: 0.9em;
+}

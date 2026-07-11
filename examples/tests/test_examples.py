@@ -40,6 +40,10 @@ def test_flask_example(copy_example, monkeypatch):
     assert "dots.svg" in css.get_data(as_text=True)
     assert client.get("/cobrastyle/img/dots.svg").status_code == 200
     assert "/cobrastyle/about.css" in client.get("/about").get_data(as_text=True)
+    about_css = client.get("/cobrastyle/about.css").get_data(as_text=True)
+    assert "@import" not in about_css  # theme.css is bundled in
+    assert "code {" in about_css
+    assert "sourceMappingURL=data:application/json;base64," in about_css
 
     build(
         module.create_app().jinja_env,
@@ -55,6 +59,9 @@ def test_flask_example(copy_example, monkeypatch):
     built = prod.get(next(href for href in hrefs if "index" in href))
     assert built.status_code == 200
     assert "/static/cobrastyle/img/dots." in built.get_data(as_text=True)
+    about_hrefs = css_hrefs(prod.get("/about").get_data(as_text=True))
+    built_about = prod.get(next(href for href in about_hrefs if "about" in href)).get_data(as_text=True)
+    assert "code{" in built_about  # @import bundled, then minified
 
 
 def test_fastapi_example(copy_example, monkeypatch):
@@ -71,6 +78,9 @@ def test_fastapi_example(copy_example, monkeypatch):
     assert client.get("/cobrastyle/index.css").status_code == 200
     assert client.get("/cobrastyle/img/dots.svg").status_code == 200
     assert "/cobrastyle/about.css" in client.get("/about").text
+    about_css = client.get("/cobrastyle/about.css").text
+    assert "@import" not in about_css  # theme.css is bundled in
+    assert "code {" in about_css
 
     build(
         module.templates.env,
@@ -111,6 +121,10 @@ def test_django_example(copy_example, monkeypatch):
             assert css_hrefs(about) == ["/cobrastyle/base.css", "/cobrastyle/about.css"]
             assert client.get("/cobrastyle/index.css").status_code == 200
             assert client.get("/cobrastyle/img/dots.svg").status_code == 200
+            about_css = client.get("/cobrastyle/about.css").content.decode()
+            assert "@import" not in about_css  # theme.css is bundled in
+            assert "code {" in about_css
+            assert "sourceMappingURL=data:application/json;base64," in about_css
 
             call_command("cobrastyle_build", verbosity=0)
 

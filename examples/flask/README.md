@@ -14,7 +14,7 @@ at `/cobrastyle/`. Edit a `.css` file and refresh.
 ## Prod mode
 
 ```sh
-uv run cobrastyle build app:create_app -o static/cobrastyle --url-prefix /static/cobrastyle/
+uv run cobrastyle build app:create_app -o static/cobrastyle --url-prefix /static/cobrastyle/ --clean
 COBRASTYLE_ENV=prod uv run flask --app app run
 ```
 
