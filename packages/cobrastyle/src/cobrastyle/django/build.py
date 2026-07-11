@@ -29,8 +29,7 @@ def collect_dtl(
     Compiling a DTL template fires ``{% cobrastyle %}`` at parse time; a
     temporary dev runtime with dependency analysis collects the modules.
     """
-    # The build emits production CSS — minified unless told otherwise, never
-    # source maps, compact class names — whatever the dev-serving options say.
+    # Build output is production CSS regardless of the dev-serving options
     options: ConfigureOptions = {**manager_options, "minify": minify, "source_map": False}
     if options.get("module_pattern") is None:
         options["module_pattern"] = BUILD_MODULE_PATTERN

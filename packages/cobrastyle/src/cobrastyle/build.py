@@ -105,11 +105,8 @@ def collect_jinja2(
             "The environment is configured in manifest (prod) mode; the build compiles from source. "
             "Point the build at a dev-configured target (configure(resolver=...))."
         )
-    # Force a fresh manager compiled with dependency analysis: url()/@import
-    # references become placeholders emit() resolves. The build emits
-    # production CSS — minified unless told otherwise, never source maps,
-    # compact class names — whatever the environment's dev-serving
-    # configuration says.
+    # Force a fresh manager with dependency analysis on (url()/@import become placeholders
+    # emit() resolves); build output is production CSS regardless of dev-serving settings
     extended(build_env).cobrastyle_analyze_dependencies = True
     extended(build_env).cobrastyle_minify = minify
     extended(build_env).cobrastyle_source_map = False

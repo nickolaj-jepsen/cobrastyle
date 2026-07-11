@@ -204,7 +204,7 @@ class CobrastyleExtension(Extension):
         extended(environment).globals.setdefault("cx", cx)
         extended(environment).globals[_PAGE_GLOBAL] = self._enter_page
         self._manager: CobrastyleManager | None = None
-        # check.py's hook: observes (assign target node, module path, class map) at parse time
+        # Parse-time hook observing (assign target node, module path, class map)
         self._binding_recorder: Callable[[nodes.Node, str, dict[str, str]], None] | None = None
         # Module paths statically imported by each compiled template
         self._pages: dict[str, list[str]] = {}

@@ -126,9 +126,7 @@ class CobrastyleManager:
     def _module_pattern_for(self, path: str) -> str:
         if "[name]" not in self.module_pattern:
             return self.module_pattern
-        # [name] embeds the file stem verbatim, and class attributes are
-        # whitespace-delimited — a stem like "button primary" would split the
-        # emitted class name in two
+        # [name] embeds the stem verbatim; whitespace in it would split the emitted class attribute in two
         stem = re.sub(r"\s+", "_", posixpath.splitext(posixpath.basename(path))[0])
         return self.module_pattern.replace("[name]", stem)
 
