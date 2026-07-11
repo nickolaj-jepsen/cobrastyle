@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict
 
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
@@ -10,8 +10,11 @@ from django.urls import reverse
 from jinja2 import Environment
 
 from cobrastyle.jinja2 import CobrastyleExtension, ConfigureOptions, configure, extended
-from cobrastyle.manifest import Manifest
+from cobrastyle.manifest import Manifest, ModuleEntry
 from cobrastyle.resolvers import FileSystemResolver
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 class CobrastyleSettings(TypedDict, total=False):
@@ -23,6 +26,7 @@ class CobrastyleSettings(TypedDict, total=False):
     MANIFEST: Manifest | str | Path
     OUTPUT_DIR: str | Path
     BUILD_URL_PREFIX: str
+    STATIC_PREFIX: str | None
     MINIFY: bool
     REWRITE_CLASS_NAMES: bool
     MODULE_PATTERN: str | None
@@ -57,7 +61,7 @@ def configure_from_settings(env: Environment) -> None:
         configure(env, resolver=dev_resolver(config), **common)
     else:
         manifest = config.get("MANIFEST", output_dir(config) / "manifest.json")
-        configure(env, manifest=manifest, **common)
+        configure(env, manifest=manifest, url_map=static_url_map(config), **common)
 
 
 def app_config() -> CobrastyleSettings:
@@ -84,6 +88,24 @@ def dev_resolver(config: CobrastyleSettings) -> FileSystemResolver:
     if root is None:
         root = _base_dir("COBRASTYLE['ROOT']") / "styles"
     return FileSystemResolver(root, url_prefix=config.get("URL_PREFIX", "/cobrastyle/"))
+
+
+def static_prefix(config: CobrastyleSettings) -> str | None:
+    """The static name prefix built files live under, slash-terminated; None disables staticfiles integration."""
+    prefix = config.get("STATIC_PREFIX", "cobrastyle/")
+    if prefix is None:
+        return None
+    return prefix if prefix.endswith("/") else prefix + "/"
+
+
+def static_url_map(config: CobrastyleSettings) -> Callable[[ModuleEntry], str] | None:
+    """The prod URL mapping through Django's static() — hashed storages and CDN
+    hosts apply. None (baked manifest URLs) when disabled via ``STATIC_PREFIX``
+    or overridden with an explicit ``BUILD_URL_PREFIX``."""
+    prefix = static_prefix(config)
+    if prefix is None or "BUILD_URL_PREFIX" in config:
+        return None
+    return lambda entry: static(prefix + entry.file)
 
 
 def output_dir(config: CobrastyleSettings) -> Path:

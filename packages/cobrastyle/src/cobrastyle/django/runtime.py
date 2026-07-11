@@ -6,10 +6,12 @@ from typing import TYPE_CHECKING
 from django.conf import settings
 from django.template import Origin, TemplateSyntaxError
 
-from cobrastyle.manifest import Manifest
+from cobrastyle.manifest import Manifest, ModuleEntry
 from cobrastyle.source import StylesheetNotFoundError, StyleSource
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from cobrastyle.manager import CobrastyleManager
 
 
@@ -17,8 +19,15 @@ class DTLRuntime:
     """DTL-side state: an engine-agnostic :class:`StyleSource` plus the
     parse-time page registry keyed by template origin."""
 
-    def __init__(self, manager: CobrastyleManager | None = None, manifest: Manifest | None = None):
-        self.source = StyleSource(manager=manager, manifest=manifest, rebuild_hint="manage.py cobrastyle_build")
+    def __init__(
+        self,
+        manager: CobrastyleManager | None = None,
+        manifest: Manifest | None = None,
+        url_map: Callable[[ModuleEntry], str] | None = None,
+    ):
+        self.source = StyleSource(
+            manager=manager, manifest=manifest, url_map=url_map, rebuild_hint="manage.py cobrastyle_build"
+        )
         # origin.name (absolute) → module paths / relative template name
         self.pages: dict[str, list[str]] = {}
         self.page_names: dict[str, str] = {}
@@ -84,7 +93,7 @@ def set_runtime(runtime: DTLRuntime | None) -> None:
 
 
 def _create() -> DTLRuntime:
-    from cobrastyle.django import app_config, common_options, dev_resolver, output_dir
+    from cobrastyle.django import app_config, common_options, dev_resolver, output_dir, static_url_map
 
     config = app_config()
     if config.get("DEV", settings.DEBUG):
@@ -94,4 +103,4 @@ def _create() -> DTLRuntime:
     manifest = config.get("MANIFEST", output_dir(config) / "manifest.json")
     if not isinstance(manifest, Manifest):
         manifest = Manifest.load(manifest)
-    return DTLRuntime(manifest=manifest)
+    return DTLRuntime(manifest=manifest, url_map=static_url_map(config))

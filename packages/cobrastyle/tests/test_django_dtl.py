@@ -162,6 +162,34 @@ def test_prod_render_from_manifest(project):
         assert manifest.modules["page.css"].url in html
 
 
+def test_prod_urls_resolve_through_hashed_storage(project):
+    with override_settings(**project_settings(project)):
+        call_command("cobrastyle_build", verbosity=0)
+    manifest = Manifest.load(project / "cobrastyle_static" / "cobrastyle" / "manifest.json")
+    entry = manifest.modules["page.css"]
+
+    static_root = project / "static_root"
+    with override_settings(
+        **project_settings(project, debug=False),
+        STATIC_ROOT=str(static_root),
+        STATICFILES_FINDERS=["cobrastyle.django.finders.CobrastyleFinder"],
+        STORAGES={
+            "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+            "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.ManifestStaticFilesStorage"},
+        },
+    ):
+        call_command("collectstatic", interactive=False, verbosity=0)
+        html = render("index.html")
+
+        match = re.search(r'href="([^"]+)"', html)
+        assert match is not None
+        href = match.group(1)
+        # The DTL runtime maps through the storage's re-hashed name too
+        assert href != entry.url
+        assert href.startswith("/static/cobrastyle/page.")
+        assert (static_root / href.removeprefix("/static/")).exists()
+
+
 def test_prod_missing_module_is_parse_error(project):
     with override_settings(**project_settings(project)):
         call_command("cobrastyle_build", verbosity=0)

@@ -9,7 +9,7 @@ from django.template.backends.django import DjangoTemplates
 from django.template.backends.jinja2 import Jinja2
 
 from cobrastyle.build import DEFAULT_GLOBS, BuildError, collect_jinja2, emit
-from cobrastyle.django import app_config, common_options, dev_resolver, output_dir
+from cobrastyle.django import app_config, common_options, dev_resolver, output_dir, static_prefix
 from cobrastyle.jinja2 import CobrastyleExtension, configure
 from cobrastyle.manager import Stylesheet
 
@@ -55,7 +55,8 @@ class Command(BaseCommand):
         config = app_config()
         out = Path(options["out"]) if options["out"] else output_dir(config)
         static_url = settings.STATIC_URL or "/static/"
-        url_prefix = options["url_prefix"] or config.get("BUILD_URL_PREFIX", static_url + "cobrastyle/")
+        default_prefix = static_url + (static_prefix(config) or "cobrastyle/")
+        url_prefix = options["url_prefix"] or config.get("BUILD_URL_PREFIX", default_prefix)
         globs = tuple(options["globs"] or DEFAULT_GLOBS)
         strict = options["strict"]
         minify = not options["no_minify"]
