@@ -1,0 +1,15 @@
+.hero {
+  padding: 3rem 2rem;
+  border-radius: 0.8rem;
+  background: #ecfdf5 url(img/dots.svg);
+}
+
+.title {
+  margin: 0 0 0.75rem;
+  font-size: 2.4rem;
+}
+
+.cta {
+  composes: button from "./base.css";
+  font-weight: 600;
+}

@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% load cobrastyle %}
+{% block title %}About · cobrastyle demo{% endblock %}
+{% block content %}
+  {% cobrastyle "about.css" as styles %}
+  <article class="{{ styles.prose }}">
+    <h1>How it works</h1>
+    <p>
+      This page is Django Template Language; the home page is Jinja2. Both engines share
+      the same CSS modules, and <span class="{{ styles.highlight }}">one build covers
+      them both</span>.
+    </p>
+    <p>
+      In development every stylesheet compiles on demand. In production
+      <code>manage.py cobrastyle_build</code> writes hashed CSS plus a manifest, and the
+      app never imports the compiler.
+    </p>
+  </article>
+{% endblock %}

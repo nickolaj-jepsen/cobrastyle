@@ -1,0 +1,16 @@
+{% load cobrastyle %}{% cobrastyle "base.css" as layout %}<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>{% block title %}cobrastyle demo{% endblock %}</title>
+    {# link collection is per top-level template, so the parent lists its own module #}
+    {% cobrastyle_links "base.css" %}
+  </head>
+  <body class="{{ layout.page }}">
+    <nav class="{{ layout.nav }}">
+      <a href="/">Home</a>
+      <a href="/about/">About</a>
+    </nav>
+    {% block content %}{% endblock %}
+  </body>
+</html>

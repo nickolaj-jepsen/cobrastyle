@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Home · cobrastyle demo{% endblock %}
+{% block content %}
+  {% cobrastyle styles = "index.css" %}
+  <section class="{{ styles.hero }}">
+    <h1 class="{{ styles.title }}">CSS modules for Python</h1>
+    <p>This page renders through Django's Jinja2 backend; the About page is plain DTL.</p>
+    <a class="{{ styles.cta }}" href="/about/">How it works</a>
+  </section>
+{% endblock %}

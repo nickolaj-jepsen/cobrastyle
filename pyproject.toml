@@ -1,5 +1,5 @@
 [tool.uv.workspace]
-members = ["packages/*"]
+members = ["packages/*", "examples/flask", "examples/fastapi", "examples/django"]
 
 [tool.uv.sources]
 cobrastyle-lightningcss = { workspace = true }
@@ -20,7 +20,7 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["packages"]
+testpaths = ["packages", "examples"]
 
 [tool.ruff]
 line-length = 120

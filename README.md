@@ -23,6 +23,12 @@ It has two modes:
   `[fastapi]`, `[django]`, `[cli]`
 - [cobrastyle-lightningcss](./packages/cobrastyle-lightningcss): Python bindings for LightningCSS
 
+## Examples
+
+Runnable example apps live in [examples/](./examples): [Flask](./examples/flask),
+[FastAPI](./examples/fastapi), and [Django](./examples/django) (Jinja2 and DTL side by
+side). Each runs in dev mode and has a one-command production build.
+
 ## Usage
 
 ### Jinja2

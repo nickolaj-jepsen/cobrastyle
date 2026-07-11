@@ -11,3 +11,8 @@ packages/*/dist/
 
 # Rust
 packages/*/target/
+
+# Example build output
+examples/*/static/cobrastyle/
+examples/django/cobrastyle_static/
+examples/django/static_root/
