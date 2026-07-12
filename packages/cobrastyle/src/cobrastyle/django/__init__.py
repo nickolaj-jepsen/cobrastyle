@@ -30,7 +30,7 @@ class CobrastyleSettings(TypedDict, total=False):
     BUILD_URL_PREFIX: str
     STATIC_PREFIX: str | None
     MINIFY: bool
-    REWRITE_CLASS_NAMES: bool
+    UNDERSCORE_ALIASES: bool
     MODULE_PATTERN: str | None
     TARGETS: list[str] | None
     SOURCE_MAP: bool
@@ -76,8 +76,8 @@ def common_options(config: CobrastyleSettings) -> ConfigureOptions:
     options: ConfigureOptions = {}
     if "MINIFY" in config:
         options["minify"] = config["MINIFY"]
-    if "REWRITE_CLASS_NAMES" in config:
-        options["rewrite_class_names"] = config["REWRITE_CLASS_NAMES"]
+    if "UNDERSCORE_ALIASES" in config:
+        options["underscore_aliases"] = config["UNDERSCORE_ALIASES"]
     if "MODULE_PATTERN" in config:
         options["module_pattern"] = config["MODULE_PATTERN"]
     if "TARGETS" in config:

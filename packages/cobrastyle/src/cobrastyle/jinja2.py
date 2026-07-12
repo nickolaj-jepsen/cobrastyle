@@ -35,7 +35,7 @@ class ConfigureOptions(TypedDict, total=False):
     """The mode-independent keyword options of :func:`configure`, for adapters that forward them."""
 
     minify: bool
-    rewrite_class_names: bool
+    underscore_aliases: bool
     module_pattern: str | None
     targets: list[str] | None
     source_map: bool
@@ -50,7 +50,7 @@ class ExtendedEnvironment(Environment):
     cobrastyle_manifest: Manifest | None
     cobrastyle_url_map: Callable[[ModuleEntry], str] | None
     cobrastyle_minify: bool
-    cobrastyle_rewrite_class_names: bool
+    cobrastyle_underscore_aliases: bool
     cobrastyle_module_pattern: str | None
     cobrastyle_targets: list[str] | None
     cobrastyle_analyze_dependencies: bool
@@ -84,7 +84,7 @@ def configure(
     resolver: FileResolver,
     hot_reload: bool | str = ...,
     minify: bool = ...,
-    rewrite_class_names: bool = ...,
+    underscore_aliases: bool = ...,
     module_pattern: str | None = ...,
     targets: list[str] | None = ...,
     source_map: bool = ...,
@@ -96,7 +96,7 @@ def configure(
     manifest: Manifest | str | Path,
     url_map: Callable[[ModuleEntry], str] | None = ...,
     minify: bool = ...,
-    rewrite_class_names: bool = ...,
+    underscore_aliases: bool = ...,
     module_pattern: str | None = ...,
     targets: list[str] | None = ...,
     source_map: bool = ...,
@@ -109,7 +109,7 @@ def configure(
     url_map: Callable[[ModuleEntry], str] | None = None,
     hot_reload: bool | str = False,
     minify: bool = False,
-    rewrite_class_names: bool = True,
+    underscore_aliases: bool = True,
     module_pattern: str | None = None,
     targets: list[str] | None = None,
     source_map: bool = True,
@@ -172,7 +172,7 @@ def configure(
     env.cobrastyle_url_map = url_map
     env.cobrastyle_hot_reload = hot_reload_prefix
     env.cobrastyle_minify = minify
-    env.cobrastyle_rewrite_class_names = rewrite_class_names
+    env.cobrastyle_underscore_aliases = underscore_aliases
     env.cobrastyle_module_pattern = module_pattern
     env.cobrastyle_targets = targets
     env.cobrastyle_source_map = source_map
@@ -207,7 +207,7 @@ class CobrastyleExtension(Extension):
             cobrastyle_manifest=None,
             cobrastyle_url_map=None,
             cobrastyle_minify=False,
-            cobrastyle_rewrite_class_names=True,
+            cobrastyle_underscore_aliases=True,
             cobrastyle_module_pattern=None,
             cobrastyle_targets=None,
             cobrastyle_analyze_dependencies=False,
@@ -249,7 +249,7 @@ class CobrastyleExtension(Extension):
                 environment.cobrastyle_resolver,
                 minify=environment.cobrastyle_minify,
                 module_pattern=environment.cobrastyle_module_pattern,
-                rewrite_class_names=environment.cobrastyle_rewrite_class_names,
+                underscore_aliases=environment.cobrastyle_underscore_aliases,
                 targets=environment.cobrastyle_targets,
                 analyze_dependencies=environment.cobrastyle_analyze_dependencies,
                 source_map=environment.cobrastyle_source_map,

@@ -81,11 +81,13 @@ def cli() -> None:
     "-o",
     "output_dir",
     type=click.Path(file_okay=False, path_type=Path),
-    default="cobrastyle_static",
+    default="static/cobrastyle",
     show_default=True,
     help="Directory receiving hashed CSS files and manifest.json.",
 )
-@click.option("--url-prefix", default="/static/", show_default=True, help="URL prefix baked into manifest URLs.")
+@click.option(
+    "--url-prefix", default="/static/cobrastyle/", show_default=True, help="URL prefix baked into manifest URLs."
+)
 @click.option(
     "--glob", "globs", multiple=True, help=f"Template glob(s) to build. [default: {', '.join(DEFAULT_GLOBS)}]"
 )

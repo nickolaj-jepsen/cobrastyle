@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import TypedDict, Unpack
+from typing import Unpack
 
 from flask import Flask, Response, abort, request
 
@@ -7,17 +7,6 @@ from cobrastyle.jinja2 import CobrastyleExtension, ConfigureOptions, configure
 from cobrastyle.manifest import Manifest
 from cobrastyle.resolvers import FileResolver, FileSystemResolver, HasUrlPrefix
 from cobrastyle.serve import EVENTS_PATH, SSE_HEADERS, serve, watch_events
-
-
-class CobrastyleOptions(ConfigureOptions, TypedDict, total=False):
-    """Every keyword :class:`Cobrastyle` accepts, for :func:`init_app`."""
-
-    resolver: FileResolver | None
-    manifest: Manifest | str | Path | None
-    root: str | Path | None
-    url_prefix: str
-    serve: bool
-    hot_reload: bool | None
 
 
 class Cobrastyle:
@@ -88,8 +77,3 @@ class Cobrastyle:
                 app.add_url_rule(f"{prefix.rstrip('/')}/<path:filename>", endpoint="cobrastyle", view_func=serve_css)
 
         app.extensions["cobrastyle"] = self
-
-
-def init_app(app: Flask, **kwargs: Unpack[CobrastyleOptions]) -> Cobrastyle:
-    """Shorthand for ``Cobrastyle(app, **kwargs)``."""
-    return Cobrastyle(app, **kwargs)

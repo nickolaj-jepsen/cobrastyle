@@ -17,7 +17,7 @@ button fetches a fragment whose stylesheet (`tip.css`) the page never linked;
 ## Prod mode
 
 ```sh
-uv run cobrastyle build app:create_app -o static/cobrastyle --url-prefix /static/cobrastyle/ --clean
+uv run cobrastyle build app:create_app --clean
 COBRASTYLE_ENV=prod uv run flask --app app run
 ```
 

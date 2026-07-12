@@ -216,7 +216,7 @@ def test_settings_forward_compile_options(page_project):
         "MINIFY": True,
         "SOURCE_MAP": False,
         "TARGETS": ["safari >= 13"],
-        "REWRITE_CLASS_NAMES": False,
+        "UNDERSCORE_ALIASES": False,
         "MODULE_PATTERN": "[local]",
     }
 
@@ -227,7 +227,7 @@ def test_settings_forward_compile_options(page_project):
         assert extension is not None
         compiled = extension.manager.import_module("page.css")
 
-    assert extension.manager.rewrite_class_names is False
+    assert extension.manager.underscore_aliases is False
     assert "-webkit-user-select" in compiled.code
     assert compiled.map is None
     assert "\n" not in compiled.code.strip()  # minified

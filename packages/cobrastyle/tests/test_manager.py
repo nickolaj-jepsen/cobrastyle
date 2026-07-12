@@ -22,15 +22,15 @@ class CountingResolver:
         self.resources = resources
         self.calls = 0
 
-    def resolve(self, filename: str) -> ResolvedFile:
+    def resolve(self, path: str) -> ResolvedFile:
         self.calls += 1
-        return ResolvedFile(url=filename, content=self.resources[filename])
+        return ResolvedFile(url=path, content=self.resources[path])
 
-    def mtime(self, filename: str) -> float | None:
+    def mtime(self, path: str) -> float | None:
         return None
 
-    def read_bytes(self, filename: str) -> bytes:
-        return self.resources[filename].encode()
+    def read_bytes(self, path: str) -> bytes:
+        return self.resources[path].encode()
 
 
 def test_import_module():

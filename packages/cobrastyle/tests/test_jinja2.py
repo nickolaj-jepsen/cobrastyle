@@ -15,7 +15,7 @@ def _clean(template: str) -> str:
 def make_environment(
     resources: dict[str, str] | None = None,
     templates: dict[str, str] | None = None,
-    rewrite_class_names: bool = True,
+    underscore_aliases: bool = True,
     **kwargs,
 ) -> Environment:
     jinja = Environment(loader=DictLoader(templates or {}), extensions=[CobrastyleExtension], **kwargs)
@@ -24,7 +24,7 @@ def make_environment(
         resolver=InMemoryResolver(resources or {}),
         minify=False,
         module_pattern="[local]",
-        rewrite_class_names=rewrite_class_names,
+        underscore_aliases=underscore_aliases,
     )
     return jinja
 
@@ -33,10 +33,10 @@ def render_jinja(
     template: str,
     resources: dict[str, str] | None = None,
     templates: dict[str, str] | None = None,
-    rewrite_class_names: bool = True,
+    underscore_aliases: bool = True,
     **kwargs,
 ) -> str:
-    jinja = make_environment(resources, templates, rewrite_class_names, **kwargs)
+    jinja = make_environment(resources, templates, underscore_aliases, **kwargs)
     return _clean(jinja.from_string(template).render())
 
 
@@ -78,7 +78,7 @@ def test_dash_in_class_name_rewrite():
     2:{{ styles["header-title"] }}
     """,
         resources,
-        rewrite_class_names=True,
+        underscore_aliases=True,
     )
 
     assert result == _clean("""
@@ -96,7 +96,7 @@ def test_disabled_class_name_rewrite():
     2:{{ styles["header-title"] }}
     """,
         resources,
-        rewrite_class_names=False,
+        underscore_aliases=False,
     )
 
     assert result == _clean("""

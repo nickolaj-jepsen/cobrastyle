@@ -14,7 +14,7 @@ at `/cobrastyle/`. Edit a `.css` file and refresh.
 ## Prod mode
 
 ```sh
-uv run cobrastyle build app:templates -o static/cobrastyle --url-prefix /static/cobrastyle/ --clean
+uv run cobrastyle build app:templates --clean
 COBRASTYLE_ENV=prod uv run uvicorn app:app
 ```
 

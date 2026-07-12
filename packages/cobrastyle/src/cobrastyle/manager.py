@@ -75,7 +75,7 @@ class CobrastyleManager:
         *,
         minify: bool = False,
         module_pattern: str | None = None,
-        rewrite_class_names: bool = True,
+        underscore_aliases: bool = True,
         targets: list[str] | None = None,
         analyze_dependencies: bool = False,
         source_map: bool = True,
@@ -83,7 +83,7 @@ class CobrastyleManager:
         self.resolver = resolver
         self.minify = minify
         self.module_pattern = DEV_MODULE_PATTERN if module_pattern is None else module_pattern
-        self.rewrite_class_names = rewrite_class_names
+        self.underscore_aliases = underscore_aliases
         self.targets = targets
         self.analyze_dependencies = analyze_dependencies
         self.source_map = source_map
@@ -173,7 +173,7 @@ class CobrastyleManager:
     def _class_map(self, path: str, exports: dict[str, CssModuleExport], composes: list[str]) -> dict[str, str]:
         # sorted: exports come from a Rust HashMap, whose order would leak nondeterminism into the manifest
         classes = {name: self._class_value(path, exports[name], composes) for name in sorted(exports)}
-        if self.rewrite_class_names:
+        if self.underscore_aliases:
             # Expose `.hello-world` as both styles["hello-world"] and styles.hello_world
             for name, value in list(classes.items()):
                 if "-" in name:

@@ -309,7 +309,7 @@ def _etag(stylesheet: Stylesheet) -> str:
 class CobrastyleWSGIMiddleware:
     """WSGI middleware serving compiled CSS under ``url_prefix``; everything else falls through."""
 
-    def __init__(self, app: WSGIApplication, manager: CobrastyleManager, url_prefix: str = "/static/"):
+    def __init__(self, app: WSGIApplication, manager: CobrastyleManager, url_prefix: str = "/cobrastyle/"):
         self.app = app
         self.manager = manager
         self.url_prefix = url_prefix if url_prefix.endswith("/") else url_prefix + "/"

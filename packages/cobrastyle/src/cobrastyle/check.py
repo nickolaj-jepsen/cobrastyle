@@ -188,7 +188,7 @@ class UsageCollector:
                 name
                 for name, value in classes.items()
                 if name not in names_used
-                and not _is_rewrite_alias(name, classes)
+                and not _is_underscore_alias(name, classes)
                 and not ("-" in name and name.replace("-", "_") in names_used)
                 # A used class elsewhere composes this one: its output tokens all reappear there
                 and not all(token in used_tokens for token in value.split())
@@ -198,7 +198,7 @@ class UsageCollector:
         return unused
 
 
-def _is_rewrite_alias(name: str, classes: dict[str, str]) -> bool:
+def _is_underscore_alias(name: str, classes: dict[str, str]) -> bool:
     """True for the underscore alias the manager adds beside a dashed class name."""
     dashed = name.replace("_", "-")
     return dashed != name and classes.get(dashed) == classes[name]

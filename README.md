@@ -195,14 +195,15 @@ so in practice this only matters on a deliberately single-threaded setup.
 ### Building (non-Django)
 
 ```sh
-cobrastyle build myapp:create_environment --out dist --url-prefix /static/
+cobrastyle build myapp:create_environment
 ```
 
 The target is adapted by type: a `jinja2.Environment`, a Flask app, a `Jinja2Templates`
-instance, or a zero-arg factory returning any of these. The output directory contains
-content-hashed CSS (plus any `url()` assets, rewritten) and `manifest.json` — the sole
-input the prod runtime needs. Builds are deterministic: unchanged input produces
-byte-identical output.
+instance, or a zero-arg factory returning any of these. The output directory — by
+default `static/cobrastyle/`, serving under `/static/cobrastyle/`; override with
+`--out` and `--url-prefix` — contains content-hashed CSS (plus any `url()` assets,
+rewritten) and `manifest.json`, the sole input the prod runtime needs. Builds are
+deterministic: unchanged input produces byte-identical output.
 
 ### Checking
 

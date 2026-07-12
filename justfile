@@ -57,11 +57,11 @@ example name mode="dev": sync
     case "{{ name }}:{{ mode }}" in
         flask:dev) uv run flask --app app run ;;
         flask:prod)
-            uv run cobrastyle build app:create_app -o static/cobrastyle --url-prefix /static/cobrastyle/ --clean
+            uv run cobrastyle build app:create_app --clean
             COBRASTYLE_ENV=prod uv run flask --app app run ;;
         fastapi:dev) uv run uvicorn app:app --reload ;;
         fastapi:prod)
-            uv run cobrastyle build app:templates -o static/cobrastyle --url-prefix /static/cobrastyle/ --clean
+            uv run cobrastyle build app:templates --clean
             COBRASTYLE_ENV=prod uv run uvicorn app:app ;;
         django:dev) uv run python manage.py runserver ;;
         django:prod)
