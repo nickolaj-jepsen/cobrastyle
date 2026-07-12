@@ -7,10 +7,12 @@
     <script src="https://unpkg.com/htmx.org@2.0.7" defer></script>
   </head>
   <body class="{{ layout.page }}">
-    <nav class="{{ layout.nav }}">
+    <nav class="{{ layout.nav }}" hx-boost="true">
       <a href="/">Home</a>
       <a href="/about/">About</a>
     </nav>
     {% block content %}{% endblock %}
+    {# HTMX drops a boosted response's <head>: this links what the page we land on adds. #}
+    {% cobrastyle_fragment_links %}
   </body>
 </html>

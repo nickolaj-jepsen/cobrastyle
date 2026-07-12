@@ -223,6 +223,33 @@ without that the cloak silently no-ops (you get the flash it exists to prevent, 
 more). Note that adding a nonce to `style-src` makes CSP3 ignore an `'unsafe-inline'`
 you may be relying on elsewhere.
 
+### Boosted navigation, and whole pages swapped in as partials
+
+`hx-boost`, `hx-select`, and the one-endpoint-two-shapes handler all feed a *page* to
+HTMX, which strips the response's `<head>` before it swaps anything. The page's own
+`<link>`s go with it, so you land on a page styled only by whatever the previous one
+happened to link. The fix is the same out-of-band script, called once at the end of the
+layout's `<body>`:
+
+```jinja
+<head>{{ cobrastyle.links() }}</head>
+<body>
+  {% block content %}{% endblock %}
+  {{ cobrastyle.fragment_links() }}
+</body>
+```
+
+On an ordinary load it finds every link already in `<head>`, adds nothing, and removes
+itself. Arriving over HTMX, it adds what the live page is missing. Keep it a direct child
+of `<body>`, since `htmx.config.allowNestedOobSwaps` may be off. (HTMX's `head-support`
+extension solves the same problem more thoroughly, at the cost of another runtime
+dependency; this needs none.) The examples do it this way, with `hx-boost` on the nav.
+
+One limitation worth knowing: links added this way stay in `<head>` for the life of the
+document — nothing removes the ones the page you navigated away from brought. Scoped class
+names hash the file path, so they can't collide, but the unscoped rules in a `*.global.css`
+that a previous page linked do remain in effect.
+
 ### CSS hot reload (dev)
 
 In dev mode the framework adapters turn on hot reload whenever they are also serving

@@ -75,6 +75,14 @@ def test_flask_example(copy_example, monkeypatch):
     # The carrier trails the content: leading it, HTMX's <template> parse drops a <tr> root
     assert fragment.index("<aside") < fragment.index("hx-swap-oob")
 
+    # The layout's own carrier: HTMX drops a boosted response's <head>, so the page
+    # re-links its modules out-of-band on arrival (a no-op on an ordinary load)
+    about = client.get("/about").get_data(as_text=True)
+    assert 'hx-boost="true"' in about
+    boosted_links = about[about.index('<div hx-swap-oob="beforeend:head">') :]
+    assert '"/cobrastyle/about.css"' in boosted_links
+    assert '"/cobrastyle/base.css"' in boosted_links
+
     build(
         module.create_app().jinja_env,
         output_dir=project / "static" / "cobrastyle",

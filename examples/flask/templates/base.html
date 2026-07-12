@@ -10,10 +10,12 @@
   </head>
   <body class="{{ layout.page }}">
     <h1 class="visually-hidden">cobrastyle demo</h1>
-    <nav class="{{ layout.nav }}">
+    <nav class="{{ layout.nav }}" hx-boost="true">
       <a href="/">Home</a>
       <a href="/about">About</a>
     </nav>
     {% block content %}{% endblock %}
+    {# HTMX drops a boosted response's <head>: this links what the page we land on adds. #}
+    {{ cobrastyle.fragment_links() }}
   </body>
 </html>
