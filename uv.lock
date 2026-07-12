@@ -106,6 +106,7 @@ dependencies = [
 [package.optional-dependencies]
 cli = [
     { name = "click" },
+    { name = "jinja2" },
 ]
 django = [
     { name = "django" },
@@ -113,6 +114,7 @@ django = [
 ]
 fastapi = [
     { name = "fastapi" },
+    { name = "jinja2" },
 ]
 flask = [
     { name = "flask" },
@@ -128,7 +130,9 @@ requires-dist = [
     { name = "django", marker = "extra == 'django'", specifier = ">=5.2" },
     { name = "fastapi", marker = "extra == 'fastapi'", specifier = ">=0.110" },
     { name = "flask", marker = "extra == 'flask'", specifier = ">=3.0" },
+    { name = "jinja2", marker = "extra == 'cli'", specifier = ">=3.1" },
     { name = "jinja2", marker = "extra == 'django'", specifier = ">=3.1" },
+    { name = "jinja2", marker = "extra == 'fastapi'", specifier = ">=3.1" },
     { name = "jinja2", marker = "extra == 'jinja2'", specifier = ">=3.1" },
 ]
 provides-extras = ["jinja2", "flask", "fastapi", "cli", "django"]

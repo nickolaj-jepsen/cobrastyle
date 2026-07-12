@@ -25,6 +25,7 @@ lint: sync
     uv run ruff check .
     uv run ruff format --check .
     uv run python scripts/versions.py check
+    @cmp -s LICENSE packages/cobrastyle/LICENSE && cmp -s LICENSE packages/cobrastyle-lightningcss/LICENSE || { echo "package LICENSE copies are out of sync with the root LICENSE"; exit 1; }
     cargo fmt --manifest-path {{ rust_manifest }} -- --check
     cargo clippy --manifest-path {{ rust_manifest }} --all-targets -- -D warnings
 
