@@ -8,7 +8,7 @@ from jinja2 import Environment, FileSystemLoader, TemplateSyntaxError
 from cobrastyle import FileSystemResolver
 from cobrastyle.build import build
 from cobrastyle.jinja2 import CobrastyleExtension, configure
-from cobrastyle.manifest import Manifest
+from cobrastyle.manifest import Manifest, ModuleEntry
 
 URL_PREFIX = "/static/cobrastyle/"
 
@@ -182,3 +182,26 @@ def test_fastapi_prod_mode(built_project):
     html = client.get("/").text
     assert manifest.modules["page.css"].url in html
     assert client.get("/cobrastyle/page.css").status_code == 404
+
+
+def test_prod_links_cache_follows_reconfiguration(built_project):
+    """links() markup caches per used-modules tuple; configure() must drop the cache."""
+    environment = make_prod_environment(built_project)
+    template = environment.get_template("index.html")
+    assert URL_PREFIX in template.render()
+
+    manifest = Manifest.load(built_project / "dist" / "manifest.json")
+    moved = Manifest(
+        generator=manifest.generator,
+        modules={
+            path: ModuleEntry(file=entry.file, url="/cdn/" + entry.file, classes=entry.classes, assets=entry.assets)
+            for path, entry in manifest.modules.items()
+        },
+        assets=manifest.assets,
+        pages=manifest.pages,
+    )
+    configure(environment, manifest=moved)
+
+    hrefs = re.findall(r'href="([^"]+)"', template.render())
+    assert hrefs
+    assert all(href.startswith("/cdn/") for href in hrefs)

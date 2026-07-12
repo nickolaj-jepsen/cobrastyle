@@ -197,11 +197,14 @@ def configure(
     env.cobrastyle_module_pattern = module_pattern
     env.cobrastyle_targets = targets
     env.cobrastyle_source_map = source_map
-    # Drop the lazily-built manager so reconfiguration actually takes effect;
-    # templates already compiled keep the class maps they baked in.
+    # Drop the lazily-built manager, source and links markup so reconfiguration
+    # actually takes effect; templates already compiled keep the class maps they
+    # baked in. Rebind, don't clear: overlays share the dict via Extension.bind.
     extension = CobrastyleExtension.get(environment)
     if extension is not None:
         extension._manager = None
+        extension._source = None
+        extension._links_cache = {}
 
 
 class CobrastyleExtension(Extension):
@@ -240,6 +243,9 @@ class CobrastyleExtension(Extension):
         extended(environment).globals[_PAGE_GLOBAL] = self._enter_page
         self._manager: CobrastyleManager | None = None
         self._manager_lock = threading.Lock()
+        self._source: StyleSource | None = None
+        # Manifest-mode links() markup by used-modules tuple (immutable per process)
+        self._links_cache: dict[tuple[str, ...], Markup] = {}
         # Parse-time hook observing (assign target node, module path, class map)
         self._binding_recorder: Callable[[nodes.Node, str, dict[str, str]], None] | None = None
         # Module paths statically imported by each compiled template
@@ -355,11 +361,21 @@ class CobrastyleExtension(Extension):
 
     @property
     def source(self) -> StyleSource:
-        """The current-mode resolution source; built per access so reconfiguration takes effect."""
-        manifest = self.manifest
-        if manifest is not None:
-            return StyleSource(manifest=manifest, url_map=extended(self.environment).cobrastyle_url_map)
-        return StyleSource(manager=self.manager)
+        """The current-mode resolution source, cached until :func:`configure` drops it.
+
+        A racing rebuild is benign: both racers wrap the same (lock-guarded)
+        manager or manifest, and a StyleSource carries only caches of data
+        derived from them.
+        """
+        source = self._source
+        if source is None:
+            manifest = self.manifest
+            if manifest is not None:
+                source = StyleSource(manifest=manifest, url_map=extended(self.environment).cobrastyle_url_map)
+            else:
+                source = StyleSource(manager=self.manager)
+            self._source = source
+        return source
 
     def stylesheet_url(self, path: str) -> str:
         """Return the URL the module at ``path`` is served from."""
@@ -404,8 +420,19 @@ class CobrastyleRuntime:
         script that live-swaps those links as their sources change.
         """
         used: list[str] = context.vars.get(_USED_KEY, [])
-        urls = [self._extension.stylesheet_url(path) for path in used]
-        hot_reload = extended(self._extension.environment).cobrastyle_hot_reload
+        extension = self._extension
+        if extension.manifest is not None:
+            # URLs and markup are immutable per process (configure rejects
+            # hot_reload with a manifest, so the prefix is always None here)
+            key = tuple(used)
+            cached = extension._links_cache.get(key)
+            if cached is None:
+                urls = [extension.stylesheet_url(path) for path in used]
+                cached = Markup(stylesheet_links_html(urls, hot_reload_prefix=None))
+                extension._links_cache[key] = cached
+            return cached
+        urls = [extension.stylesheet_url(path) for path in used]
+        hot_reload = extended(extension.environment).cobrastyle_hot_reload
         return Markup(stylesheet_links_html(urls, hot_reload_prefix=hot_reload))
 
     @pass_context

@@ -54,3 +54,17 @@ def test_manifest_pages_fallback():
 
     dev = StyleSource(manager=CobrastyleManager(InMemoryResolver({})))
     assert dev.manifest_pages("index.html") is None
+
+
+def test_manifest_url_map_runs_once_per_path():
+    calls: list[str] = []
+
+    def url_map(entry: ModuleEntry) -> str:
+        calls.append(entry.file)
+        return "/cdn/" + entry.file
+
+    source = StyleSource(manifest=make_manifest(), url_map=url_map)
+
+    assert source.url_for("page.css") == "/cdn/page.abc.css"
+    assert source.url_for("page.css") == "/cdn/page.abc.css"
+    assert calls == ["page.abc.css"]

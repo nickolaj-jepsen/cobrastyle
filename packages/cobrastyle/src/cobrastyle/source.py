@@ -37,6 +37,9 @@ class StyleSource:
         self.manifest = manifest
         self.rebuild_hint = rebuild_hint
         self.url_map = url_map
+        # Manifest entries and url_map are immutable per process, and Django's
+        # static() url_map is expensive enough to dominate a DTL prod render
+        self._urls: dict[str, str] = {}
 
     def _entry(self, path: str) -> ModuleEntry:
         assert self.manifest is not None
@@ -65,11 +68,16 @@ class StyleSource:
         """Return the URL the module at ``path`` is served from.
 
         In manifest mode, ``url_map`` (when set) derives the URL from the
-        module's entry instead of returning the one baked in at build time.
+        module's entry instead of returning the one baked in at build time;
+        either way the URL resolves once per path and is cached.
         """
         if self.manifest is not None:
-            entry = self._entry(path)
-            return self.url_map(entry) if self.url_map is not None else entry.url
+            url = self._urls.get(path)
+            if url is None:
+                entry = self._entry(path)
+                url = self.url_map(entry) if self.url_map is not None else entry.url
+                self._urls[path] = url
+            return url
         assert self.manager is not None
         # URLs are path-derived and render-invariant — skip import_module's freshness stat
         cached = self.manager.get(path)

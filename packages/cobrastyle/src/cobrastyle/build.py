@@ -134,7 +134,9 @@ def collect_jinja2(
     extended(build_env).cobrastyle_source_map = False
     if extended(build_env).cobrastyle_module_pattern is None:
         extended(build_env).cobrastyle_module_pattern = BUILD_MODULE_PATTERN
+    # Both, or the overlay's walk compiles through the base env's cached source
     extension._manager = None
+    extension._source = None
 
     pages: dict[str, list[str]] = {}
     for name, source, filename in walk_template_sources(build_env, globs, extra_templates):
