@@ -210,7 +210,11 @@ def serve(
             return None
         if _etag_matches(if_none_match, negotiated.etag):
             return Served(304, [("ETag", negotiated.etag)], b"")
-        body = negotiated.body()
+        try:
+            body = negotiated.body()
+        except _RESOLVE_ERRORS:
+            # A directory, unreadable file, or a delete racing the stat: still a miss
+            return None
     except Exception as exc:
         if not _is_compile_error(exc):
             raise
@@ -314,7 +318,10 @@ def get_resource(manager: CobrastyleManager, path: str) -> Resource | None:
     negotiated = _negotiate_css(manager, path) if path.endswith(".css") else _negotiate_raw(manager, path)
     if negotiated is None:
         return None
-    return Resource(negotiated.body(), negotiated.content_type, negotiated.etag)
+    try:
+        return Resource(negotiated.body(), negotiated.content_type, negotiated.etag)
+    except _RESOLVE_ERRORS:
+        return None
 
 
 def _is_compile_error(exc: Exception) -> bool:

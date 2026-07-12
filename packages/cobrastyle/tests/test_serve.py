@@ -74,6 +74,39 @@ def test_missing_import_dependency_surfaces_as_compile_error():
     assert "failed to compile entry.css" in result.body.decode()
 
 
+def test_raw_directory_request_is_not_found(tmp_path):
+    (tmp_path / "fonts").mkdir()
+    (tmp_path / "fonts" / "a.woff2").write_bytes(b"x")
+    manager = CobrastyleManager(FileSystemResolver(tmp_path))
+
+    assert serve(manager, "fonts") is None
+    assert serve(manager, "") is None
+    assert get_resource(manager, "fonts") is None
+
+
+def test_non_utf8_stylesheet_surfaces_as_compile_error(tmp_path):
+    (tmp_path / "bad.css").write_bytes(b".a { content: '\xe9'; }")
+    manager = CobrastyleManager(FileSystemResolver(tmp_path))
+
+    result = serve(manager, "bad.css")
+
+    assert result is not None
+    assert result.status == 200
+    assert "not valid UTF-8" in result.body.decode()
+
+
+def test_css_through_escaping_symlink_is_not_found(tmp_path):
+    (tmp_path / "styles").mkdir()
+    (tmp_path / "secret.css").write_text(".s {}")
+    try:
+        (tmp_path / "styles" / "link.css").symlink_to(tmp_path / "secret.css")
+    except OSError:
+        pytest.skip("symlinks unavailable")
+    manager = CobrastyleManager(FileSystemResolver(tmp_path / "styles"))
+
+    assert serve(manager, "link.css") is None
+
+
 def test_error_css_escapes_the_message():
     css = error_css("x.css", 'a "quote" and a */ comment close')
 

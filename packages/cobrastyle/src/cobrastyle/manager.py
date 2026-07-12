@@ -3,7 +3,13 @@ import re
 import threading
 from typing import NamedTuple
 
-from cobrastyle.errors import CircularComposesError, ComposesExportError, StylesheetNotFoundError
+from cobrastyle.errors import (
+    CircularComposesError,
+    ComposesExportError,
+    StylesheetDecodeError,
+    StylesheetNotFoundError,
+    StylesheetPathError,
+)
 from cobrastyle.paths import normalize_path
 from cobrastyle.resolvers import FileResolver
 from cobrastyle_lightningcss import CssModuleExport, CssModuleReference, Dependency, bundle
@@ -48,6 +54,8 @@ class _BundleProvider:
             return self.resolver.resolve(path).content
         except (KeyError, OSError) as exc:
             raise StylesheetNotFoundError(f"Stylesheet {path!r} not found by the resolver", path=path) from exc
+        except UnicodeDecodeError as exc:
+            raise StylesheetDecodeError(f"Stylesheet {path!r} is not valid UTF-8: {exc}") from exc
 
     def resolve(self, specifier: str, from_path: str) -> str:
         return normalize_path(posixpath.join(posixpath.dirname(from_path), specifier))
@@ -136,8 +144,12 @@ class CobrastyleManager:
     def _compile(self, path: str) -> Stylesheet:
         try:
             resolved = self.resolver.resolve(path)
-        except (KeyError, OSError) as exc:
+        except (KeyError, OSError, StylesheetPathError) as exc:
+            # StylesheetPathError here means the *entry* escapes the root (e.g. via a
+            # symlink) — a miss, unlike an escaping @import raised mid-bundle.
             raise StylesheetNotFoundError(f"Stylesheet {path!r} not found by the resolver", path=path) from exc
+        except UnicodeDecodeError as exc:
+            raise StylesheetDecodeError(f"Stylesheet {path!r} is not valid UTF-8: {exc}") from exc
         result = bundle(
             filename=path,
             provider=_BundleProvider(self.resolver, path, resolved.content),

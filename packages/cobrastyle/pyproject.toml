@@ -48,7 +48,7 @@ django = [
 ]
 
 [project.scripts]
-cobrastyle = "cobrastyle.cli:cli"
+cobrastyle = "cobrastyle._main:main"
 
 [project.urls]
 Repository = "https://github.com/nickolaj-jepsen/cobrastyle"

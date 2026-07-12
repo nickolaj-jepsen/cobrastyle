@@ -196,6 +196,20 @@ def test_dtl_dot_access_reaches_dict_method_named_class(project):
     assert "unused" not in stderr
 
 
+def test_dtl_class_named_like_dict_method_keeps_unused_reporting(project):
+    # A plain class reference (key-first resolution) must not exempt the module
+    # from unused reporting the way whole-map dict-API use does
+    (project / "styles" / "page.css").write_text(".items { color: red; } .orphan { color: blue; }")
+    (project / "templates" / "index.html").write_text(
+        '{% load cobrastyle %}{% cobrastyle "page.css" as styles %}{{ styles.items }}'
+    )
+
+    stdout, stderr = run_check(project)
+
+    assert "OK" in stdout
+    assert "orphan" in stderr
+
+
 def test_dtl_dict_api_dot_access_is_not_flagged(project):
     # styles.items resolves to the bound dict method when no such class exists —
     # a valid template (iterating the class map), not an unknown-class reference

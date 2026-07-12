@@ -4,13 +4,8 @@ import importlib
 import sys
 from pathlib import Path
 
-try:
-    import click
-    from jinja2 import Environment
-except ImportError as exc:
-    raise SystemExit(
-        "The cobrastyle CLI requires the 'cli' extra — install with: pip install 'cobrastyle[cli]'"
-    ) from exc
+import click
+from jinja2 import Environment
 
 from cobrastyle.build import DEFAULT_GLOBS, BuildError
 from cobrastyle.build import build as run_build

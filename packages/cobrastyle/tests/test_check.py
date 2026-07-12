@@ -70,6 +70,27 @@ def test_reference_before_the_binding_is_not_flagged():
     assert report.unused == {}
 
 
+def test_same_line_reference_before_the_binding_is_not_flagged():
+    report = run_check(
+        {"index.html": '{{ styles.extra }}{% cobrastyle styles = "page.css" %}{{ styles.title }}'},
+        {"page.css": ".title { color: red }"},
+    )
+
+    assert report.ok
+
+
+def test_jinja_subscript_with_dict_api_name_is_still_checked():
+    # No class "items" and no attribute fallback in jinja subscripts: KeyError at render
+    report = run_check(
+        {"index.html": '{% cobrastyle styles = "page.css" %}{{ styles["items"] }}'},
+        {"page.css": ".title { color: red }"},
+    )
+
+    assert not report.ok
+    [problem] = report.unknown
+    assert problem.attr == "items"
+
+
 def test_unknown_class_reports_location_and_suggestion():
     report = run_check(
         {"index.html": '{% cobrastyle styles = "page.css" %}\n<b class="{{ styles.buttom }}">x</b>'},

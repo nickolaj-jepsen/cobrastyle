@@ -68,14 +68,13 @@ def _scan_nodelist(template_name: str, nodelist: NodeList, collector: UsageColle
                 continue
             if len(lookups) == 1:
                 scan.escaped.add(lookups[0])
-            elif hasattr({}, lookups[1]):
-                # DTL resolves the missing dict key to the bound method and calls it
-                # (styles.items) — dict-API use of the whole map, not a class reference
-                scan.dynamic.add(lookups[0])
             else:
                 display = f"{lookups[0]}.{lookups[1]}"
-                # DTL variable resolution tries the dict key before attributes
-                scan.references.append(Reference(lookups[0], lookups[1], lineno, display, subscript_first=True))
+                # DTL resolution tries the dict key first, then falls back to
+                # attributes/methods — the collector resolves which one this is
+                scan.references.append(
+                    Reference(lookups[0], lookups[1], lineno, display, subscript_first=True, attr_fallback=True)
+                )
     return scan
 
 

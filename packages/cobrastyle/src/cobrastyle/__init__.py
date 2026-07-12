@@ -7,6 +7,7 @@ from cobrastyle.errors import (
     CobrastyleError,
     ComposesExportError,
     ManifestError,
+    StylesheetDecodeError,
     StylesheetNotFoundError,
     StylesheetPathError,
 )
@@ -27,6 +28,7 @@ __all__ = [
     "ManifestError",
     "ResolvedFile",
     "Stylesheet",
+    "StylesheetDecodeError",
     "StylesheetNotFoundError",
     "StylesheetPathError",
     "cx",

@@ -139,9 +139,9 @@ def collect_jinja2(
     pages: dict[str, list[str]] = {}
     for name, source, filename in walk_template_sources(build_env, globs, extra_templates):
         try:
-            # parse(), not compile(): the walk only needs the extension's preprocess/
-            # parse side effects, and codegen roughly doubles the per-template cost.
-            build_env.parse(source, name=name, filename=filename)
+            # Full compile(), not parse(): codegen-stage errors (unknown filters,
+            # duplicate blocks) must fail the build per handle_compile_failure's rules.
+            build_env.compile(source, name=name, filename=filename)
         except Exception as exc:
             handle_compile_failure(name, source, exc, strict)
             continue

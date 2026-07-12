@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Self, TypedDict, cast, overload
@@ -66,15 +65,37 @@ def extended(environment: Environment) -> ExtendedEnvironment:
 class _CompileState(threading.local):
     """The template currently being compiled, per thread.
 
-    ``page_paths`` collects the template's module paths until the first
-    ``{% cobrastyle %}`` tag publishes it into the extension's page registry —
-    deferred so a concurrent render never observes a half-built (or emptied)
-    entry for a page it is rendering.
+    ``page_paths`` collects the template's module paths; the last of the
+    ``pending_tags`` counted by preprocess() publishes it into the extension's
+    page registry as one finished list — deferred so a concurrent render never
+    observes a half-built (or emptied) entry for a page it is rendering.
     """
 
     def __init__(self) -> None:
         self.page_id: str | None = None
         self.page_paths: list[str] | None = None
+        self.pending_tags = 0
+
+
+def _count_cobrastyle_tags(environment: Environment, source: str, name: str | None) -> int | None:
+    """The number of ``cobrastyle`` tags the parser will fire for ``source``.
+
+    Lexer-exact, unlike a regex over the raw text: line-statement tags count,
+    while tags inside comments or ``{% raw %}`` don't. None when the source
+    doesn't lex — the compile is about to fail anyway.
+    """
+    count = 0
+    previous = ""
+    try:
+        for _, token_type, value in environment.lexer.tokeniter(source, name):
+            if token_type == "whitespace":
+                continue  # tokeniter is pre-normalization: whitespace sits between begin and name
+            if token_type == "name" and value == "cobrastyle" and previous in ("block_begin", "linestatement_begin"):
+                count += 1
+            previous = token_type
+    except TemplateSyntaxError:
+        return None
+    return count
 
 
 @overload
@@ -272,16 +293,18 @@ class CobrastyleExtension(Extension):
         # in a loop) reuses one registry entry instead of growing _pages forever
         page_id = name if name is not None else f"<anonymous-{hashlib.sha256(source.encode()).hexdigest()[:12]}>"
         environment = self.environment
-        tag = re.compile(re.escape(environment.block_start_string) + r"[+-]?\s*cobrastyle\b")
-        if tag.search(source) is None:
-            # No tag ever fires: [] is the final value (the substring hit was e.g.
-            # {{ cobrastyle.links() }}), and publishing now keeps tag-removal edits fresh.
+        tags = _count_cobrastyle_tags(environment, source, name)
+        if tags == 0:
+            # No tag ever fires (the substring hit was e.g. {{ cobrastyle.links() }}):
+            # [] is the final value, and publishing now keeps tag-removal edits fresh.
             self._pages[page_id] = []
         else:
-            # Deferred: parse() swaps the finished list in atomically, so a render
-            # racing this compile sees the previous complete entry, never an emptied one.
+            # Deferred: the last tag's parse() swaps the finished list in atomically,
+            # so a render racing this compile sees the previous complete entry, never
+            # an emptied or half-built one. A failed compile leaves the old entry.
             self._compiling.page_id = page_id
             self._compiling.page_paths = []
+            self._compiling.pending_tags = tags if tags is not None else -1
         # Prepended without a newline so template line numbers stay intact. The
         # top-level set runs at render start — before any parent template renders —
         # which lets {{ cobrastyle.links() }} in an inherited <head> see this
@@ -318,7 +341,9 @@ class CobrastyleExtension(Extension):
             for page_path in page_paths:
                 if page_path not in page:
                     page.append(page_path)
-            self._pages[page_id] = page
+            self._compiling.pending_tags -= 1
+            if self._compiling.pending_tags == 0:
+                self._pages[page_id] = page
 
         return nodes.Assign(target, nodes.Const(classes)).set_lineno(lineno)
 

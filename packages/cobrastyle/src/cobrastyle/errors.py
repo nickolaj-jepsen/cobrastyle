@@ -25,6 +25,10 @@ class StylesheetPathError(CobrastyleError, ValueError):
     """A module path that is invalid: absolute, escaping the resolver root, or not naming a file."""
 
 
+class StylesheetDecodeError(CobrastyleError, ValueError):
+    """A stylesheet's bytes are not valid UTF-8."""
+
+
 class CircularComposesError(CobrastyleError, ValueError):
     """CSS modules ``composes`` each other in a cycle."""
 

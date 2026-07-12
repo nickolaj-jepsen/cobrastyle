@@ -27,6 +27,11 @@ class Reference(NamedTuple):
     # Whether the engine tries the dict key before attributes (DTL, jinja subscripts);
     # jinja getattr is attribute-first, so the dict API shadows same-named classes
     subscript_first: bool
+    # Whether a missing key falls back to the dict API instead of failing (DTL dot
+    # access resolves styles.items to the bound method when no such class exists)
+    attr_fallback: bool = False
+    # Document position of the accessed name among the template's Name nodes (jinja only)
+    order: int | None = None
 
 
 @dataclass
@@ -36,9 +41,9 @@ class TemplateScan:
     template: str
     # binding name → module path, one entry per {% cobrastyle %} tag
     bindings: list[tuple[str, str]] = field(default_factory=list)
-    # Name → line of its first cobrastyle binding (jinja only); references on
-    # earlier lines resolve from the render context, not the binding
-    binding_lineno: dict[str, int] = field(default_factory=dict)
+    # Name → document position of its first cobrastyle binding (jinja only);
+    # references before it resolve from the render context, not the binding
+    binding_order: dict[str, int] = field(default_factory=dict)
     references: list[Reference] = field(default_factory=list)
     # Names (re)bound by anything other than a cobrastyle tag
     stored: set[str] = field(default_factory=set)
@@ -143,10 +148,13 @@ class UsageCollector:
             for name in scan.escaped | scan.dynamic:
                 paths = local[name] if name in local and name not in tainted else global_bindings.get(name, set())
                 fully_used.update(paths)
-            for name, attr, lineno, display, subscript_first in scan.references:
+            for reference in scan.references:
+                name, attr, lineno, display, subscript_first = reference[:5]
                 verifiable = name in local and name not in tainted
-                if verifiable and lineno is not None and lineno < scan.binding_lineno.get(name, 0):
-                    verifiable = False  # precedes the binding: jinja resolves it from the render context
+                first_binding = scan.binding_order.get(name)
+                if verifiable and reference.order is not None and first_binding is not None:
+                    # Precedes the binding: jinja resolves it from the render context
+                    verifiable = reference.order >= first_binding
                 paths = local[name] if verifiable else global_bindings.get(name, set())
                 if not paths:
                     continue
@@ -171,6 +179,10 @@ class UsageCollector:
                 elif exporting:
                     for path in exporting:
                         used[path].add(attr)
+                elif reference.attr_fallback and hasattr({}, attr):
+                    # DTL dot access falling back to the dict API (styles.items with no
+                    # such class): whole-map use, so exports can't be attributed
+                    fully_used.update(paths)
                 elif verifiable:
                     exports = sorted({export for path in paths for export in self.class_maps[path]})
                     suggestion = next(iter(difflib.get_close_matches(attr, exports, n=1)), None)
@@ -253,13 +265,15 @@ def check_jinja2(
 def scan_jinja2_ast(template: str, ast: nodes.Template, bindings: list[tuple[nodes.Node, str]]) -> TemplateScan:
     """Statically scan a parsed template for class-map bindings, accesses, rebinds and escapes."""
     scan = TemplateScan(template)
+    # find_all yields document order; name positions give exact reference-vs-binding ordering
+    order = {id(name_node): position for position, name_node in enumerate(ast.find_all(nodes.Name))}
     binding_targets: set[int] = set()
     for target, path in bindings:
         if isinstance(target, nodes.Name):
             scan.bindings.append((target.name, path))
-            lineno = getattr(target, "lineno", None)
-            if lineno is not None and lineno < scan.binding_lineno.get(target.name, lineno + 1):
-                scan.binding_lineno[target.name] = lineno
+            position = order.get(id(target))
+            if position is not None and position < scan.binding_order.get(target.name, position + 1):
+                scan.binding_order[target.name] = position
             binding_targets.add(id(target))
 
     consumed: set[int] = set()
@@ -275,10 +289,14 @@ def scan_jinja2_ast(template: str, ast: nodes.Template, bindings: list[tuple[nod
                 scan.dynamic.add(base.name)
             else:
                 display = f"{base.name}.{node.attr}"
-                scan.references.append(Reference(base.name, node.attr, node.lineno, display, subscript_first=False))
+                scan.references.append(
+                    Reference(base.name, node.attr, node.lineno, display, subscript_first=False, order=order[id(base)])
+                )
         elif isinstance(node.arg, nodes.Const) and isinstance(node.arg.value, str):
             display = f'{base.name}["{node.arg.value}"]'
-            scan.references.append(Reference(base.name, node.arg.value, node.lineno, display, subscript_first=True))
+            scan.references.append(
+                Reference(base.name, node.arg.value, node.lineno, display, subscript_first=True, order=order[id(base)])
+            )
         else:
             scan.dynamic.add(base.name)
 

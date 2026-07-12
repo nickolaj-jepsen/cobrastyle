@@ -339,6 +339,49 @@ def test_recompiling_does_not_blank_page_tracking_mid_compile():
     assert extension.page_modules("page.html") == ["test.css"]
 
 
+def test_line_statement_tags_are_tracked():
+    jinja = Environment(
+        loader=DictLoader({"page.html": '<head>{{ cobrastyle.links() }}</head>\n% cobrastyle styles = "page.css"\nx'}),
+        extensions=[CobrastyleExtension],
+        line_statement_prefix="%",
+    )
+    configure(jinja, resolver=InMemoryResolver({"page.css": ".a { color: red; }"}), module_pattern="[local]")
+
+    html = jinja.get_template("page.html").render()
+
+    assert '<link rel="stylesheet" href="page.css" />' in html
+
+
+def test_commenting_out_the_tag_drops_page_tracking():
+    source = '{% cobrastyle styles = "test.css" %}{{ cobrastyle.links() }}'
+    jinja = make_environment({"test.css": ".a {}"}, templates={"page.html": source})
+    jinja.get_template("page.html")
+    extension = CobrastyleExtension.get(jinja)
+    assert extension is not None
+    assert extension.page_modules("page.html") == ["test.css"]
+
+    # The tag text survives inside a comment, but the lexer sees no tag: [] is final
+    extension.preprocess('{# {% cobrastyle styles = "test.css" %} #}{{ cobrastyle.links() }}', "page.html")
+
+    assert extension.page_modules("page.html") == []
+
+
+def test_failed_recompile_keeps_the_previous_page_entry():
+    good = '{% cobrastyle a = "a.css" %}{% cobrastyle b = "b.css" %}'
+    jinja = make_environment({"a.css": ".a {}", "b.css": ".b {}"}, templates={"page.html": good})
+    jinja.get_template("page.html")
+    extension = CobrastyleExtension.get(jinja)
+    assert extension is not None
+    assert extension.page_modules("page.html") == ["a.css", "b.css"]
+
+    # The second tag fails mid-compile: the partial list must never be published
+    broken = '{% cobrastyle a = "a.css" %}{% cobrastyle b = "missing.css" %}'
+    with pytest.raises(TemplateSyntaxError):
+        jinja.compile(broken, name="page.html", filename="page.html")
+
+    assert extension.page_modules("page.html") == ["a.css", "b.css"]
+
+
 def test_reconfigure_takes_effect():
     jinja = make_environment({"a.css": ".a { color: red; }"})
     jinja.from_string('{% cobrastyle styles = "a.css" %}').render()

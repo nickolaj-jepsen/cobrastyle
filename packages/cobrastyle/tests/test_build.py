@@ -211,6 +211,16 @@ def test_external_url_classification_matches_the_bundler(specifier, external):
     assert bundler_external is external
 
 
+def test_build_fails_on_codegen_errors():
+    # Unknown filters surface at code generation, after parse: the walk must still catch them
+    source = '{% cobrastyle styles = "test.css" %}{{ styles.a | no_such_filter }}'
+    environment = Environment(loader=DictLoader({"page.html": source}), extensions=[CobrastyleExtension])
+    configure(environment, resolver=InMemoryResolver({"test.css": ".a { color: red; }"}))
+
+    with pytest.raises(BuildError, match="no_such_filter"):
+        collect_jinja2(environment)
+
+
 def test_default_globs_cover_the_jinja2_suffix():
     source = '{% cobrastyle styles = "test.css" %}{{ styles.a }}'
     environment = Environment(loader=DictLoader({"page.jinja2": source}), extensions=[CobrastyleExtension])
