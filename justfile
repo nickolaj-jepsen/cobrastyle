@@ -16,6 +16,10 @@ develop:
 test *args: sync
     uv run pytest {{ args }}
 
+# Run the performance benchmarks (excluded from `just test` and CI)
+bench *args: sync
+    uv run pytest benchmarks {{ args }}
+
 # Re-run the test suite whenever source files change
 watch *args:
     watchexec --clear -e py,rs,css,html,toml -- just test {{ args }}

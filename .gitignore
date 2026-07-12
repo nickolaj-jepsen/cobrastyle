@@ -12,6 +12,10 @@ packages/*/dist/
 # Rust
 packages/*/target/
 
+# Benchmark output
+.benchmarks/
+benchmarks/profiles/
+
 # Example build output
 examples/*/static/cobrastyle/
 examples/django/cobrastyle_static/

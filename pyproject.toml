@@ -17,6 +17,7 @@ dev = [
     "click>=8.1",
     "django>=5.2",
     "django-stubs>=6.0.6",
+    "pytest-benchmark>=5.1",
 ]
 
 [tool.pytest.ini_options]
@@ -44,6 +45,6 @@ select = [
 known-first-party = ["cobrastyle", "cobrastyle_lightningcss"]
 
 [tool.pyrefly]
-project-includes = ["packages", "examples"]
-search-path = ["packages/cobrastyle/src", "examples/django"]
+project-includes = ["packages", "examples", "benchmarks"]
+search-path = ["packages/cobrastyle/src", "examples/django", "benchmarks"]
 python-version = "3.12"
