@@ -25,7 +25,6 @@ class Stylesheet(NamedTuple):
     url: str
     code: str
     classes: dict[str, str]
-    mtime: float | None = None
     # url() and external-@import dependencies (only when analyze_dependencies is on)
     dependencies: tuple[Dependency, ...] = ()
     # Module paths this module composes classes from
@@ -182,7 +181,6 @@ class CobrastyleManager:
             url=resolved.url,
             code=result.code,
             classes=classes,
-            mtime=resolved.mtime,
             dependencies=tuple(result.dependencies or ()),
             composes=tuple(composes),
             map=result.map,

@@ -3,6 +3,11 @@ import posixpath
 from cobrastyle.errors import StylesheetPathError
 
 
+def url_prefix(prefix: str) -> str:
+    """Normalize a serving prefix to the slash-terminated form every URL join assumes."""
+    return prefix if prefix.endswith("/") else prefix + "/"
+
+
 def normalize_path(path: str) -> str:
     """Normalize a resolver-relative stylesheet path to a canonical POSIX form.
 

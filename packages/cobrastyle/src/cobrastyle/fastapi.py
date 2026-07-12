@@ -3,9 +3,9 @@ from typing import Protocol, Unpack, overload
 
 from jinja2 import Environment
 
-from cobrastyle.jinja2 import CobrastyleExtension, ConfigureOptions, configure
+from cobrastyle.jinja2 import CobrastyleExtension, ConfigureOptions, configure, configure_dev
 from cobrastyle.manifest import Manifest
-from cobrastyle.resolvers import FileResolver, FileSystemResolver, HasUrlPrefix
+from cobrastyle.resolvers import FileResolver
 from cobrastyle.serve import CobrastyleASGIApp
 
 
@@ -70,24 +70,20 @@ def install(
     if not isinstance(environment, Environment):
         raise TypeError(f"Expected a jinja2.Environment or Jinja2Templates, got {type(target).__name__}")
 
-    environment.add_extension(CobrastyleExtension)
-
     if manifest is not None:
+        environment.add_extension(CobrastyleExtension)
         configure(environment, manifest=manifest, **options)
         return
 
-    if resolver is None:
-        if root is None:
-            raise TypeError("Provide either resolver=, root= (the styles directory), or manifest= (prod)")
-        resolver = FileSystemResolver(root, url_prefix=url_prefix)
-    prefix = resolver.url_prefix if isinstance(resolver, HasUrlPrefix) else url_prefix
     serving = app is not None and serve
-    if hot_reload is None:
-        hot_reload = serving
-    configure(environment, resolver=resolver, hot_reload=prefix if hot_reload else False, **options)
-
+    extension, prefix = configure_dev(
+        environment,
+        resolver=resolver,
+        root=root,
+        url_prefix=url_prefix,
+        hot_reload=serving if hot_reload is None else hot_reload,
+        **options,
+    )
     if serving:
         assert app is not None
-        extension = CobrastyleExtension.get(environment)
-        assert extension is not None  # add_extension above guarantees it
         app.mount(prefix.rstrip("/"), CobrastyleASGIApp(extension.manager))

@@ -149,7 +149,7 @@ class UsageCollector:
                 paths = local[name] if name in local and name not in tainted else global_bindings.get(name, set())
                 fully_used.update(paths)
             for reference in scan.references:
-                name, attr, lineno, display, subscript_first = reference[:5]
+                name, attr, display = reference.name, reference.attr, reference.display
                 verifiable = name in local and name not in tainted
                 first_binding = scan.binding_order.get(name)
                 if verifiable and reference.order is not None and first_binding is not None:
@@ -160,7 +160,7 @@ class UsageCollector:
                     continue
                 references += 1
                 exporting = [path for path in paths if attr in self.class_maps[path]]
-                if not subscript_first and hasattr({}, attr):
+                if not reference.subscript_first and hasattr({}, attr):
                     # jinja getattr resolves attributes first, so the dict API wins
                     # even over an exported class — dot access never yields it
                     fully_used.update(paths)
@@ -168,7 +168,7 @@ class UsageCollector:
                         unknown.append(
                             UnknownClass(
                                 scan.template,
-                                lineno,
+                                reference.lineno,
                                 display,
                                 attr,
                                 tuple(sorted(paths)),
@@ -186,7 +186,9 @@ class UsageCollector:
                 elif verifiable:
                     exports = sorted({export for path in paths for export in self.class_maps[path]})
                     suggestion = next(iter(difflib.get_close_matches(attr, exports, n=1)), None)
-                    unknown.append(UnknownClass(scan.template, lineno, display, attr, tuple(sorted(paths)), suggestion))
+                    unknown.append(
+                        UnknownClass(scan.template, reference.lineno, display, attr, tuple(sorted(paths)), suggestion)
+                    )
 
         unknown.sort(key=lambda problem: (problem.template, problem.lineno or 0))
         unused = self._unused(used, fully_used)

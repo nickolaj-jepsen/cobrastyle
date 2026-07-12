@@ -3,10 +3,11 @@ from typing import Any
 
 from django.core.management.base import BaseCommand, CommandError
 
-from cobrastyle.build import DEFAULT_GLOBS, BuildError
+from cobrastyle.build import DEFAULT_GLOBS
 from cobrastyle.check import UsageCollector, check_jinja2
 from cobrastyle.django import app_config, common_options, dev_resolver
 from cobrastyle.django.management import dev_overlay, find_backends
+from cobrastyle.errors import BuildError
 
 
 class Command(BaseCommand):

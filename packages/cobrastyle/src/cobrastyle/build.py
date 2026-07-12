@@ -13,9 +13,10 @@ from typing import TYPE_CHECKING, NamedTuple
 from jinja2 import Environment
 
 from cobrastyle.errors import BuildError
-from cobrastyle.jinja2 import CobrastyleExtension, extended
+from cobrastyle.jinja2 import CobrastyleExtension, ConfigureOptions, configure, extended
 from cobrastyle.manifest import AssetEntry, Manifest, ModuleEntry
 from cobrastyle.paths import normalize_path
+from cobrastyle.paths import url_prefix as normalize_url_prefix
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -43,6 +44,19 @@ class CollectedTemplates(NamedTuple):
     pages: dict[str, list[str]]
     stylesheets: list[Stylesheet]
     resolver: FileResolver | None
+
+
+def build_options(base: ConfigureOptions, *, minify: bool) -> ConfigureOptions:
+    """The compile options a build uses, whatever the target's dev-serving config says.
+
+    Production CSS: minified (unless asked otherwise), no source map, compact
+    class names unless the user pinned a pattern, and dependency analysis on so
+    ``url()``/``@import`` become placeholders :func:`emit` resolves.
+    """
+    options: ConfigureOptions = {**base, "minify": minify, "source_map": False, "analyze_dependencies": True}
+    if options.get("module_pattern") is None:
+        options["module_pattern"] = BUILD_MODULE_PATTERN
+    return options
 
 
 def handle_compile_failure(name: str, source: str, exc: Exception, strict: bool) -> None:
@@ -122,21 +136,17 @@ def collect_jinja2(
 ) -> CollectedTemplates:
     """Walk the environment's templates; return the pages, compiled stylesheets, and their resolver."""
     build_env, extension = overlay_with_extension(environment)
-    if extended(build_env).cobrastyle_manifest is not None:
+    env = extended(build_env)
+    if env.cobrastyle_manifest is not None:
         raise BuildError(
             "The environment is configured in manifest (prod) mode; the build compiles from source. "
             "Point the build at a dev-configured target (configure(resolver=...))."
         )
-    # Force a fresh manager with dependency analysis on (url()/@import become placeholders
-    # emit() resolves); build output is production CSS regardless of dev-serving settings
-    extended(build_env).cobrastyle_analyze_dependencies = True
-    extended(build_env).cobrastyle_minify = minify
-    extended(build_env).cobrastyle_source_map = False
-    if extended(build_env).cobrastyle_module_pattern is None:
-        extended(build_env).cobrastyle_module_pattern = BUILD_MODULE_PATTERN
-    # Both, or the overlay's walk compiles through the base env's cached source
-    extension._manager = None
-    extension._source = None
+    assert env.cobrastyle_resolver is not None  # dev mode: configure() guarantees one or the other
+    # Reconfiguring the overlay rebuilds its manager and source under the build's
+    # options — the walk must not compile through the base environment's caches.
+    build_env.bytecode_cache = None
+    configure(build_env, resolver=env.cobrastyle_resolver, **build_options(env.cobrastyle_options, minify=minify))
 
     pages: dict[str, list[str]] = {}
     for name, source, filename in walk_template_sources(build_env, globs, extra_templates):
@@ -171,7 +181,7 @@ def emit(
     ``manifest.json`` only, so user files sharing the directory survive.
     Leave it off when old hashes must outlive a rolling deploy.
     """
-    prefix = url_prefix if url_prefix.endswith("/") else url_prefix + "/"
+    prefix = normalize_url_prefix(url_prefix)
     output = Path(output_dir)
     if clean:
         _clean_output(output)

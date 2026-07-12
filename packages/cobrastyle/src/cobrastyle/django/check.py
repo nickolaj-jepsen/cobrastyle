@@ -7,7 +7,7 @@ from django.template.defaulttags import ForNode, WithNode
 
 from cobrastyle.build import DEFAULT_GLOBS
 from cobrastyle.check import Reference, TemplateScan, UsageCollector
-from cobrastyle.django.build import _parse_templates, _throwaway_runtime
+from cobrastyle.django.build import parse_templates, throwaway_runtime
 from cobrastyle.django.runtime import DTLRuntime
 from cobrastyle.django.templatetags.cobrastyle import CobrastyleNode
 from cobrastyle.manager import CobrastyleManager
@@ -41,8 +41,8 @@ def check_dtl(
     risking a false positive.
     """
     manager = CobrastyleManager(resolver, **manager_options)
-    with _throwaway_runtime(backend, DTLRuntime(manager=manager)):
-        for name, template in _parse_templates(backend, globs, strict):
+    with throwaway_runtime(backend, DTLRuntime(manager=manager)):
+        for name, template in parse_templates(backend, globs, strict):
             collector.add(_scan_nodelist(name, template.template.nodelist, collector))
 
 

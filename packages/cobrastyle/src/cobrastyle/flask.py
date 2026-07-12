@@ -3,9 +3,9 @@ from typing import Unpack
 
 from flask import Flask, Response, abort, request
 
-from cobrastyle.jinja2 import CobrastyleExtension, ConfigureOptions, configure
+from cobrastyle.jinja2 import CobrastyleExtension, ConfigureOptions, configure, configure_dev
 from cobrastyle.manifest import Manifest
-from cobrastyle.resolvers import FileResolver, FileSystemResolver, HasUrlPrefix
+from cobrastyle.resolvers import FileResolver
 from cobrastyle.serve import EVENTS_PATH, SSE_HEADERS, serve, watch_events
 
 
@@ -46,20 +46,19 @@ class Cobrastyle:
             self.init_app(app)
 
     def init_app(self, app: Flask) -> None:
-        app.jinja_env.add_extension(CobrastyleExtension)
-
         if self._manifest is not None:
+            app.jinja_env.add_extension(CobrastyleExtension)
             configure(app.jinja_env, manifest=self._manifest, **self._options)
         else:
-            resolver = self._resolver or FileSystemResolver(
-                self._root or Path(app.root_path) / "styles", url_prefix=self._url_prefix
+            extension, prefix = configure_dev(
+                app.jinja_env,
+                resolver=self._resolver,
+                root=self._root or Path(app.root_path) / "styles",
+                url_prefix=self._url_prefix,
+                hot_reload=self._serve if self._hot_reload is None else self._hot_reload,
+                **self._options,
             )
-            prefix = resolver.url_prefix if isinstance(resolver, HasUrlPrefix) else self._url_prefix
-            hot_reload = self._serve if self._hot_reload is None else self._hot_reload
-            configure(app.jinja_env, resolver=resolver, hot_reload=prefix if hot_reload else False, **self._options)
             if self._serve:
-                extension = CobrastyleExtension.get(app.jinja_env)
-                assert extension is not None  # add_extension above guarantees it
 
                 def serve_css(filename: str) -> Response:
                     if filename == EVENTS_PATH and request.method == "GET":

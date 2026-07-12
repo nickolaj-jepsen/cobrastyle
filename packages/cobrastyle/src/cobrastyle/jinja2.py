@@ -4,7 +4,7 @@ import hashlib
 import json
 import threading
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Self, TypedDict, cast, overload
+from typing import TYPE_CHECKING, Any, Self, TypedDict, Unpack, cast, overload
 
 from jinja2 import Environment, TemplateSyntaxError, nodes, pass_context
 from jinja2.ext import Extension
@@ -14,11 +14,9 @@ from markupsafe import Markup
 
 from cobrastyle.cx import cx
 from cobrastyle.errors import StylesheetNotFoundError, StylesheetPathError
-from cobrastyle.fragments import fragment_links_html
 from cobrastyle.manifest import Manifest, ModuleEntry
 from cobrastyle.paths import normalize_path
-from cobrastyle.resolvers import FileResolver, HasUrlPrefix
-from cobrastyle.serve import stylesheet_links_html
+from cobrastyle.resolvers import FileResolver, FileSystemResolver, HasUrlPrefix
 from cobrastyle.source import StyleSource
 
 if TYPE_CHECKING:
@@ -31,13 +29,21 @@ _PAGE_GLOBAL = "__cobrastyle_page__"
 
 
 class ConfigureOptions(TypedDict, total=False):
-    """The mode-independent keyword options of :func:`configure`, for adapters that forward them."""
+    """The compile options of :func:`configure`, forwarded verbatim to :class:`CobrastyleManager`.
+
+    Mode-independent, so adapters forward them with ``**options``. Keys match
+    the manager's keyword arguments exactly — that is the contract that lets
+    the environment store one dict instead of a field per option.
+    ``analyze_dependencies`` is the build's (it needs url()/@import
+    placeholders); nothing else sets it.
+    """
 
     minify: bool
     underscore_aliases: bool
     module_pattern: str | None
     targets: list[str] | None
     source_map: bool
+    analyze_dependencies: bool
 
 
 class ExtendedEnvironment(Environment):
@@ -48,13 +54,8 @@ class ExtendedEnvironment(Environment):
     cobrastyle_resolver: FileResolver | None
     cobrastyle_manifest: Manifest | None
     cobrastyle_url_map: Callable[[ModuleEntry], str] | None
-    cobrastyle_minify: bool
-    cobrastyle_underscore_aliases: bool
-    cobrastyle_module_pattern: str | None
-    cobrastyle_targets: list[str] | None
-    cobrastyle_analyze_dependencies: bool
-    cobrastyle_source_map: bool
     cobrastyle_hot_reload: str | None
+    cobrastyle_options: ConfigureOptions
 
 
 def extended(environment: Environment) -> ExtendedEnvironment:
@@ -109,6 +110,7 @@ def configure(
     module_pattern: str | None = ...,
     targets: list[str] | None = ...,
     source_map: bool = ...,
+    analyze_dependencies: bool = ...,
 ) -> None: ...
 @overload
 def configure(
@@ -121,6 +123,7 @@ def configure(
     module_pattern: str | None = ...,
     targets: list[str] | None = ...,
     source_map: bool = ...,
+    analyze_dependencies: bool = ...,
 ) -> None: ...
 def configure(
     environment: Environment,
@@ -134,6 +137,7 @@ def configure(
     module_pattern: str | None = None,
     targets: list[str] | None = None,
     source_map: bool = True,
+    analyze_dependencies: bool = False,
 ) -> None:
     """Configure cobrastyle on an environment using :class:`CobrastyleExtension`.
 
@@ -192,19 +196,51 @@ def configure(
     env.cobrastyle_manifest = manifest
     env.cobrastyle_url_map = url_map
     env.cobrastyle_hot_reload = hot_reload_prefix
-    env.cobrastyle_minify = minify
-    env.cobrastyle_underscore_aliases = underscore_aliases
-    env.cobrastyle_module_pattern = module_pattern
-    env.cobrastyle_targets = targets
-    env.cobrastyle_source_map = source_map
-    # Drop the lazily-built manager, source and links markup so reconfiguration
-    # actually takes effect; templates already compiled keep the class maps they
-    # baked in. Rebind, don't clear: overlays share the dict via Extension.bind.
+    # Rebound, never mutated in place: overlay() shallow-copies __dict__, so an
+    # overlay (the build's, the check's) shares this dict object with its base.
+    env.cobrastyle_options = ConfigureOptions(
+        minify=minify,
+        underscore_aliases=underscore_aliases,
+        module_pattern=module_pattern,
+        targets=targets,
+        source_map=source_map,
+        analyze_dependencies=analyze_dependencies,
+    )
+    # Drop the lazily-built manager and source (which carries the URL and markup
+    # caches) so reconfiguration actually takes effect; templates already compiled
+    # keep the class maps they baked in.
     extension = CobrastyleExtension.get(environment)
     if extension is not None:
         extension._manager = None
         extension._source = None
-        extension._links_cache = {}
+
+
+def configure_dev(
+    environment: Environment,
+    *,
+    resolver: FileResolver | None = None,
+    root: str | Path | None = None,
+    url_prefix: str = "/cobrastyle/",
+    hot_reload: bool = True,
+    **options: Unpack[ConfigureOptions],
+) -> tuple[CobrastyleExtension, str]:
+    """Register the extension and configure dev mode; return it and the serving prefix.
+
+    Pass a ``resolver`` or the ``root`` styles directory it should read. The
+    returned prefix — the resolver's own when it carries one, else
+    ``url_prefix`` — is where the dev CSS server must be mounted, and where the
+    hot-reload client looks for its events endpoint.
+    """
+    environment.add_extension(CobrastyleExtension)
+    if resolver is None:
+        if root is None:
+            raise TypeError("Provide either resolver=, root= (the styles directory), or manifest= (prod)")
+        resolver = FileSystemResolver(root, url_prefix=url_prefix)
+    prefix = resolver.url_prefix if isinstance(resolver, HasUrlPrefix) else url_prefix
+    configure(environment, resolver=resolver, hot_reload=prefix if hot_reload else False, **options)
+    extension = CobrastyleExtension.get(environment)
+    assert extension is not None  # add_extension above guarantees it
+    return extension, prefix
 
 
 class CobrastyleExtension(Extension):
@@ -230,13 +266,8 @@ class CobrastyleExtension(Extension):
             cobrastyle_resolver=None,
             cobrastyle_manifest=None,
             cobrastyle_url_map=None,
-            cobrastyle_minify=False,
-            cobrastyle_underscore_aliases=True,
-            cobrastyle_module_pattern=None,
-            cobrastyle_targets=None,
-            cobrastyle_analyze_dependencies=False,
-            cobrastyle_source_map=True,
             cobrastyle_hot_reload=None,
+            cobrastyle_options=ConfigureOptions(),
         )
         extended(environment).globals["cobrastyle"] = CobrastyleRuntime(self)
         extended(environment).globals.setdefault("cx", cx)
@@ -244,8 +275,6 @@ class CobrastyleExtension(Extension):
         self._manager: CobrastyleManager | None = None
         self._manager_lock = threading.Lock()
         self._source: StyleSource | None = None
-        # Manifest-mode links() markup by used-modules tuple (immutable per process)
-        self._links_cache: dict[tuple[str, ...], Markup] = {}
         # Parse-time hook observing (assign target node, module path, class map)
         self._binding_recorder: Callable[[nodes.Node, str, dict[str, str]], None] | None = None
         # Module paths statically imported by each compiled template
@@ -278,15 +307,7 @@ class CobrastyleExtension(Extension):
                         )
                     from cobrastyle.manager import CobrastyleManager
 
-                    self._manager = CobrastyleManager(
-                        environment.cobrastyle_resolver,
-                        minify=environment.cobrastyle_minify,
-                        module_pattern=environment.cobrastyle_module_pattern,
-                        underscore_aliases=environment.cobrastyle_underscore_aliases,
-                        targets=environment.cobrastyle_targets,
-                        analyze_dependencies=environment.cobrastyle_analyze_dependencies,
-                        source_map=environment.cobrastyle_source_map,
-                    )
+                    self._manager = CobrastyleManager(environment.cobrastyle_resolver, **environment.cobrastyle_options)
         return self._manager
 
     def preprocess(self, source: str, name: str | None, filename: str | None = None) -> str:
@@ -303,14 +324,16 @@ class CobrastyleExtension(Extension):
         if tags == 0:
             # No tag ever fires (the substring hit was e.g. {{ cobrastyle.links() }}):
             # [] is the final value, and publishing now keeps tag-removal edits fresh.
+            # Nothing to track, so skip the injection a tag-free layout would
+            # otherwise pay for on every render.
             self._pages[page_id] = []
-        else:
-            # Deferred: the last tag's parse() swaps the finished list in atomically,
-            # so a render racing this compile sees the previous complete entry, never
-            # an emptied or half-built one. A failed compile leaves the old entry.
-            self._compiling.page_id = page_id
-            self._compiling.page_paths = []
-            self._compiling.pending_tags = tags if tags is not None else -1
+            return source
+        # Deferred: the last tag's parse() swaps the finished list in atomically,
+        # so a render racing this compile sees the previous complete entry, never
+        # an emptied or half-built one. A failed compile leaves the old entry.
+        self._compiling.page_id = page_id
+        self._compiling.page_paths = []
+        self._compiling.pending_tags = tags if tags is not None else -1
         # Prepended without a newline so template line numbers stay intact. The
         # top-level set runs at render start — before any parent template renders —
         # which lets {{ cobrastyle.links() }} in an inherited <head> see this
@@ -369,11 +392,14 @@ class CobrastyleExtension(Extension):
         """
         source = self._source
         if source is None:
+            environment = extended(self.environment)
             manifest = self.manifest
             if manifest is not None:
-                source = StyleSource(manifest=manifest, url_map=extended(self.environment).cobrastyle_url_map)
+                source = StyleSource(manifest=manifest, url_map=environment.cobrastyle_url_map, markup=Markup)
             else:
-                source = StyleSource(manager=self.manager)
+                source = StyleSource(
+                    manager=self.manager, hot_reload_prefix=environment.cobrastyle_hot_reload, markup=Markup
+                )
             self._source = source
         return source
 
@@ -420,20 +446,8 @@ class CobrastyleRuntime:
         script that live-swaps those links as their sources change.
         """
         used: list[str] = context.vars.get(_USED_KEY, [])
-        extension = self._extension
-        if extension.manifest is not None:
-            # URLs and markup are immutable per process (configure rejects
-            # hot_reload with a manifest, so the prefix is always None here)
-            key = tuple(used)
-            cached = extension._links_cache.get(key)
-            if cached is None:
-                urls = [extension.stylesheet_url(path) for path in used]
-                cached = Markup(stylesheet_links_html(urls, hot_reload_prefix=None))
-                extension._links_cache[key] = cached
-            return cached
-        urls = [extension.stylesheet_url(path) for path in used]
-        hot_reload = extended(extension.environment).cobrastyle_hot_reload
-        return Markup(stylesheet_links_html(urls, hot_reload_prefix=hot_reload))
+        # Already Markup: the source wraps (and caches) with the markup= it was built with
+        return cast(Markup, self._extension.source.links_html(used))
 
     @pass_context
     def fragment_links(self, context: Context, nonce: str | None = None) -> Markup:
@@ -447,5 +461,4 @@ class CobrastyleRuntime:
         feeds the script's CSP nonce attribute.
         """
         used: list[str] = context.vars.get(_USED_KEY, [])
-        urls = [self._extension.stylesheet_url(path) for path in used]
-        return Markup(fragment_links_html(urls, nonce=nonce))
+        return cast(Markup, self._extension.source.fragment_links_html(used, nonce=nonce))

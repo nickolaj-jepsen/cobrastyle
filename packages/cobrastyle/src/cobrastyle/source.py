@@ -3,10 +3,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from cobrastyle.errors import StylesheetNotFoundError
+from cobrastyle.fragments import fragment_links_html
 from cobrastyle.manifest import Manifest, ModuleEntry
+from cobrastyle.markup import stylesheet_links_html
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
     from cobrastyle.manager import CobrastyleManager
 
@@ -28,18 +30,31 @@ class StyleSource:
         manifest: Manifest | None = None,
         rebuild_hint: str = "cobrastyle build",
         url_map: Callable[[ModuleEntry], str] | None = None,
+        hot_reload_prefix: str | None = None,
+        markup: Callable[[str], str] = str,
     ):
         if (manager is None) == (manifest is None):
             raise TypeError("Pass exactly one of manager= (dev) or manifest= (prod)")
         if url_map is not None and manifest is None:
             raise TypeError("url_map= only applies to manifest mode; dev URLs come from the manager")
+        if hot_reload_prefix is not None and manifest is not None:
+            raise TypeError("hot_reload_prefix= is dev-only; manifest mode serves static, immutable CSS")
         self.manager = manager
         self.manifest = manifest
         self.rebuild_hint = rebuild_hint
         self.url_map = url_map
+        # Serving prefix the hot-reload client loads from; None disables the script
+        self.hot_reload_prefix = hot_reload_prefix
+        # The engine's "this is safe HTML" wrapper (jinja2's Markup, Django's
+        # mark_safe). Applied before caching, so a cache hit is a plain lookup.
+        self.markup = markup
         # Manifest entries and url_map are immutable per process, and Django's
         # static() url_map is expensive enough to dominate a DTL prod render
         self._urls: dict[str, str] = {}
+        # Manifest-mode markup by module tuple — immutable per process, so both
+        # engines render a page's <link>s (and a fragment's) once and reuse them
+        self._links: dict[tuple[str, ...], str] = {}
+        self._fragments: dict[tuple[str, ...], str] = {}
 
     def _entry(self, path: str) -> ModuleEntry:
         assert self.manifest is not None
@@ -82,6 +97,35 @@ class StyleSource:
         # URLs are path-derived and render-invariant — skip import_module's freshness stat
         cached = self.manager.get(path)
         return (cached or self.manager.import_module(path)).url
+
+    def links_html(self, paths: Sequence[str]) -> str:
+        """``<link>`` markup for ``paths``, plus the hot-reload script in dev.
+
+        Engine-safe markup (see ``markup``), memoized in manifest mode.
+        """
+        if self.manifest is None:
+            urls = [self.url_for(path) for path in paths]
+            return self.markup(stylesheet_links_html(urls, hot_reload_prefix=self.hot_reload_prefix))
+        key = tuple(paths)
+        cached = self._links.get(key)
+        if cached is None:
+            cached = self.markup(stylesheet_links_html([self.url_for(path) for path in key]))
+            self._links[key] = cached
+        return cached
+
+    def fragment_links_html(self, paths: Sequence[str], *, nonce: str | None = None) -> str:
+        """Fragment-response markup (HTMX out-of-band swap) loading ``paths``.
+
+        A per-request ``nonce`` is never memoized — it would grow the cache without bound.
+        """
+        if self.manifest is None or nonce is not None:
+            return self.markup(fragment_links_html([self.url_for(path) for path in paths], nonce=nonce))
+        key = tuple(paths)
+        cached = self._fragments.get(key)
+        if cached is None:
+            cached = self.markup(fragment_links_html([self.url_for(path) for path in key]))
+            self._fragments[key] = cached
+        return cached
 
     def manifest_pages(self, page_name: str | None) -> list[str] | None:
         """The manifest's module list for a page whose parse-time registry is empty in this process."""

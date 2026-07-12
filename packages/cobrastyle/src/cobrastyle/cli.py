@@ -7,8 +7,9 @@ from pathlib import Path
 import click
 from jinja2 import Environment
 
-from cobrastyle.build import DEFAULT_GLOBS, BuildError
+from cobrastyle.build import DEFAULT_GLOBS
 from cobrastyle.build import build as run_build
+from cobrastyle.errors import BuildError
 
 
 def adapt_target(obj: object) -> Environment:

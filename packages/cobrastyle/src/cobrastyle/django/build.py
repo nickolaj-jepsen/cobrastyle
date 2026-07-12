@@ -5,7 +5,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from cobrastyle.build import BUILD_MODULE_PATTERN, DEFAULT_GLOBS, CollectedTemplates, handle_compile_failure
+from cobrastyle.build import DEFAULT_GLOBS, CollectedTemplates, build_options, handle_compile_failure
 from cobrastyle.django.runtime import DTLRuntime, set_runtime
 from cobrastyle.jinja2 import ConfigureOptions
 from cobrastyle.manager import CobrastyleManager
@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
 
 @contextmanager
-def _throwaway_runtime(backend: DjangoTemplates, runtime: DTLRuntime) -> Iterator[None]:
+def throwaway_runtime(backend: DjangoTemplates, runtime: DTLRuntime) -> Iterator[None]:
     """Install ``runtime`` for a template walk over fresh loader caches, resetting both on exit.
 
     Django caches parsed templates even in DEBUG (4.1+) and ``{% cobrastyle %}``
@@ -38,7 +38,7 @@ def _throwaway_runtime(backend: DjangoTemplates, runtime: DTLRuntime) -> Iterato
         reset_loaders(backend)
 
 
-def _parse_templates(
+def parse_templates(
     backend: DjangoTemplates, globs: tuple[str, ...], strict: bool
 ) -> Iterator[tuple[str, DjangoTemplate]]:
     """Yield (name, parsed template) for every matching template, applying the build's failure rules."""
@@ -63,21 +63,13 @@ def collect_dtl(
     Compiling a DTL template fires ``{% cobrastyle %}`` at parse time; a
     temporary dev runtime with dependency analysis collects the modules.
     """
-    # Build output is production CSS regardless of the dev-serving options
-    options: ConfigureOptions = {**manager_options, "minify": minify, "source_map": False}
-    if options.get("module_pattern") is None:
-        options["module_pattern"] = BUILD_MODULE_PATTERN
-    manager = CobrastyleManager(resolver, analyze_dependencies=True, **options)
+    manager = CobrastyleManager(resolver, **build_options(manager_options, minify=minify))
     runtime = DTLRuntime(manager=manager)
-    with _throwaway_runtime(backend, runtime):
-        for _ in _parse_templates(backend, globs, strict):
+    with throwaway_runtime(backend, runtime):
+        for _ in parse_templates(backend, globs, strict):
             pass
 
-    pages = {
-        runtime.page_names[origin_name]: paths
-        for origin_name, paths in runtime.pages.items()
-        if paths and origin_name in runtime.page_names
-    }
+    pages = {page.template_name: page.paths for page in runtime.pages.values() if page.paths and page.template_name}
     return CollectedTemplates(pages, manager.stylesheets, resolver)
 
 

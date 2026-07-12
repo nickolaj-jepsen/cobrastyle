@@ -5,9 +5,10 @@ from typing import Any
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 
-from cobrastyle.build import DEFAULT_GLOBS, BuildError, collect_jinja2, emit
+from cobrastyle.build import DEFAULT_GLOBS, collect_jinja2, emit
 from cobrastyle.django import app_config, common_options, dev_resolver, output_dir, static_prefix, static_url_map
 from cobrastyle.django.management import dev_overlay, find_backends
+from cobrastyle.errors import BuildError
 from cobrastyle.manager import Stylesheet
 
 

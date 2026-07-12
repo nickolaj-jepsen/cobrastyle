@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import NamedTuple, Protocol, runtime_checkable
 
 from cobrastyle.errors import StylesheetPathError
+from cobrastyle.paths import url_prefix as normalize_url_prefix
 
 
 class ResolvedFile(NamedTuple):
@@ -57,7 +58,7 @@ class FileSystemResolver:
 
     def __init__(self, root: str | Path, url_prefix: str = "/cobrastyle/"):
         self.root = Path(root).resolve()
-        self.url_prefix = url_prefix if url_prefix.endswith("/") else url_prefix + "/"
+        self.url_prefix = normalize_url_prefix(url_prefix)
         self._resolved_cache: dict[str, Path] = {}
 
     def _resolved(self, path: str) -> Path:

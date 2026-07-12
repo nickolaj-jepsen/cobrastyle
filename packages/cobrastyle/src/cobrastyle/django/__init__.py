@@ -12,6 +12,7 @@ from jinja2 import Environment
 
 from cobrastyle.jinja2 import CobrastyleExtension, ConfigureOptions, configure, extended
 from cobrastyle.manifest import Manifest, ModuleEntry
+from cobrastyle.paths import url_prefix as normalize_url_prefix
 from cobrastyle.resolvers import FileSystemResolver
 
 if TYPE_CHECKING:
@@ -86,6 +87,7 @@ def manifest_source(config: CobrastyleSettings) -> Manifest | str | Path:
 
 
 def common_options(config: CobrastyleSettings) -> ConfigureOptions:
+    """The compile options the settings dict sets; unset ones keep configure()'s defaults."""
     options: ConfigureOptions = {}
     if "MINIFY" in config:
         options["minify"] = config["MINIFY"]
@@ -112,7 +114,7 @@ def static_prefix(config: CobrastyleSettings) -> str | None:
     prefix = config.get("STATIC_PREFIX", "cobrastyle/")
     if prefix is None:
         return None
-    return prefix if prefix.endswith("/") else prefix + "/"
+    return normalize_url_prefix(prefix)
 
 
 def static_url_map(config: CobrastyleSettings) -> Callable[[ModuleEntry], str] | None:

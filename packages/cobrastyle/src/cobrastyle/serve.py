@@ -1,17 +1,32 @@
 from __future__ import annotations
 
 import hashlib
-import html
 import json
 import logging
 import mimetypes
+import posixpath
 import time
 from collections.abc import Awaitable, Callable, Iterable, Iterator, MutableMapping
-from http import HTTPStatus
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 from cobrastyle.errors import CobrastyleError, StylesheetNotFoundError, StylesheetPathError
+from cobrastyle.markup import CLIENT_SCRIPT_PATH, EVENTS_PATH, hot_reload_script_html, stylesheet_links_html
 from cobrastyle.paths import normalize_path
+from cobrastyle.paths import url_prefix as normalize_url_prefix
+
+__all__ = [
+    "CLIENT_SCRIPT_PATH",
+    "EVENTS_PATH",
+    "SSE_HEADERS",
+    "CobrastyleASGIApp",
+    "CobrastyleWSGIMiddleware",
+    "Served",
+    "error_css",
+    "hot_reload_script_html",
+    "serve",
+    "stylesheet_links_html",
+    "watch_events",
+]
 
 if TYPE_CHECKING:
     from wsgiref.types import StartResponse, WSGIApplication, WSGIEnvironment
@@ -30,9 +45,12 @@ CONTENT_TYPE = "text/css; charset=utf-8"
 # Dev responses must revalidate on every request so CSS edits show up on refresh.
 CACHE_CONTROL = "no-cache"
 
-# Reserved names under the dev serving prefix (hot reload); never valid stylesheet paths.
-EVENTS_PATH = "__events__"
-CLIENT_SCRIPT_PATH = "__client__.js"
+# Raw-asset content types by suffix, memoized (see _content_type)
+_CONTENT_TYPES: dict[str, str] = {}
+
+# serve() only ever answers 200 or 304; http.HTTPStatus costs ~0.5ms to import and
+# serve.py is on the prod import path through the adapters.
+_STATUS_LINES = {200: "200 OK", 304: "304 Not Modified"}
 
 EVENTS_POLL_INTERVAL = 0.3
 # Comment frames on an idle stream, so buffering proxies don't close the connection.
@@ -93,24 +111,6 @@ _CLIENT_RESOURCE = Resource(
     "text/javascript; charset=utf-8",
     f'W/"{hashlib.sha256(CLIENT_JS.encode()).hexdigest()[:16]}"',
 )
-
-
-def hot_reload_script_html(url_prefix: str) -> str:
-    """The dev-only script tag loading the hot-reload client from the serving prefix."""
-    prefix = html.escape(url_prefix if url_prefix.endswith("/") else url_prefix + "/", quote=True)
-    return f'<script src="{prefix}{CLIENT_SCRIPT_PATH}" data-events="{prefix}{EVENTS_PATH}" defer></script>'
-
-
-def stylesheet_links_html(urls: Iterable[str], *, hot_reload_prefix: str | None = None) -> str:
-    """``<link>`` markup for ``urls``, plus the hot-reload client script when a prefix is set.
-
-    The one implementation of the links markup both template engines render;
-    everything interpolated is escaped, so the result is safe to mark safe.
-    """
-    links = "".join(f'<link rel="stylesheet" href="{html.escape(url, quote=True)}" />' for url in urls)
-    if hot_reload_prefix is not None:
-        links += hot_reload_script_html(hot_reload_prefix)
-    return links
 
 
 # Not None: that's a real token (resolvers without freshness), and "missing" marks a vanished file.
@@ -282,8 +282,18 @@ def _negotiate_css(manager: CobrastyleManager, path: str) -> Negotiated | None:
     return Negotiated(stylesheet.etag, CONTENT_TYPE, lambda: stylesheet.body)
 
 
+def _content_type(path: str) -> str:
+    # guess_type re-parses the whole path; a dev project reuses a handful of suffixes
+    suffix = posixpath.splitext(path)[1]
+    content_type = _CONTENT_TYPES.get(suffix)
+    if content_type is None:
+        content_type = mimetypes.guess_type(path)[0] or "application/octet-stream"
+        _CONTENT_TYPES[suffix] = content_type
+    return content_type
+
+
 def _negotiate_raw(manager: CobrastyleManager, path: str) -> Negotiated | None:
-    content_type = mimetypes.guess_type(path)[0] or "application/octet-stream"
+    content_type = _content_type(path)
     try:
         mtime = manager.resolver.mtime(path)
         if mtime is None:
@@ -376,12 +386,13 @@ class CobrastyleWSGIMiddleware:
     def __init__(self, app: WSGIApplication, manager: CobrastyleManager, url_prefix: str = "/cobrastyle/"):
         self.app = app
         self.manager = manager
-        self.url_prefix = url_prefix if url_prefix.endswith("/") else url_prefix + "/"
+        self.url_prefix = normalize_url_prefix(url_prefix)
+        self._events_path = self.url_prefix + EVENTS_PATH
 
     def __call__(self, environ: WSGIEnvironment, start_response: StartResponse) -> Iterable[bytes]:
         path = environ.get("PATH_INFO", "")
         method = environ.get("REQUEST_METHOD", "GET")
-        if method == "GET" and path == self.url_prefix + EVENTS_PATH:
+        if method == "GET" and path == self._events_path:
             # A long-lived streaming response pins a worker thread; the default dev
             # servers (werkzeug, runserver) are threaded, so that's one thread per tab.
             start_response("200 OK", list(SSE_HEADERS))
@@ -394,7 +405,7 @@ class CobrastyleWSGIMiddleware:
                 if_none_match=environ.get("HTTP_IF_NONE_MATCH"),
             )
             if result is not None:
-                start_response(f"{result.status} {HTTPStatus(result.status).phrase}", result.headers)
+                start_response(_STATUS_LINES[result.status], result.headers)
                 return [result.body]
         return self.app(environ, start_response)
 

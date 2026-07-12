@@ -5,10 +5,8 @@ from django.utils.html import conditional_escape
 from django.utils.safestring import SafeString, mark_safe
 
 from cobrastyle.cx import cx
-from cobrastyle.django.runtime import get_runtime
-from cobrastyle.fragments import fragment_links_html
+from cobrastyle.django.runtime import DTLRuntime, get_runtime
 from cobrastyle.paths import normalize_path
-from cobrastyle.serve import stylesheet_links_html
 
 register = template.Library()
 
@@ -66,9 +64,13 @@ def cobrastyle_links(parser: template.base.Parser, token: template.base.Token) -
     return LinksNode(extra)
 
 
-def _page_paths(context: template.Context, origin: template.base.Origin | None, extra: tuple[str, ...]) -> list[str]:
+def _page_paths(
+    runtime: DTLRuntime,
+    context: template.Context,
+    origin: template.base.Origin | None,
+    extra: tuple[str, ...],
+) -> list[str]:
     """The module paths a links tag at ``origin`` covers, own-template modules first."""
-    runtime = get_runtime()
     top_origin = getattr(getattr(context, "template", None), "origin", None)
     paths = runtime.page_modules(origin)
     for path in (*runtime.page_modules(top_origin), *extra):
@@ -84,9 +86,8 @@ class LinksNode(template.Node):
     def render(self, context: template.Context) -> SafeString:
         runtime = get_runtime()
         # self.origin is stamped by the parser: the template this tag lives in
-        paths = _page_paths(context, getattr(self, "origin", None), self.extra)
-        urls = [runtime.url_for(path) for path in paths]
-        return mark_safe(stylesheet_links_html(urls, hot_reload_prefix=runtime.hot_reload_prefix))
+        paths = _page_paths(runtime, context, getattr(self, "origin", None), self.extra)
+        return runtime.links_html(paths)
 
 
 @register.tag("cobrastyle_fragment_links")
@@ -117,9 +118,9 @@ class FragmentLinksNode(template.Node):
 
     def render(self, context: template.Context) -> SafeString:
         runtime = get_runtime()
-        urls = [runtime.url_for(path) for path in _page_paths(context, getattr(self, "origin", None), self.extra)]
+        paths = _page_paths(runtime, context, getattr(self, "origin", None), self.extra)
         nonce = self.nonce.resolve(context) if self.nonce is not None else None
-        return mark_safe(fragment_links_html(urls, nonce=nonce or None))
+        return runtime.fragment_links_html(paths, nonce=nonce or None)
 
 
 # (value, condition, else-value)
