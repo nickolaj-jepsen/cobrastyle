@@ -53,7 +53,13 @@ def _extract_environment(obj: object) -> Environment | None:
 
 
 def import_target(spec: str) -> object:
-    """Import ``package.module:attribute`` (attribute may be dotted)."""
+    """Import ``package.module:attribute`` (attribute may be dotted).
+
+    Makes the working directory importable first, the way ``python -m`` does —
+    targets are usually app modules next to where the command runs.
+    """
+    if "" not in sys.path and "." not in sys.path:
+        sys.path.insert(0, "")
     module_name, sep, attribute_path = spec.partition(":")
     if not sep or not module_name or not attribute_path:
         raise click.UsageError(f"Target must look like 'package.module:attribute', got {spec!r}")
@@ -110,8 +116,6 @@ def build_command(
     no_minify: bool,
 ) -> None:
     """Build production CSS and manifest for TARGET (package.module:attribute)."""
-    if "" not in sys.path and "." not in sys.path:
-        sys.path.insert(0, "")
     environment = adapt_target(import_target(target))
     try:
         manifest = run_build(
@@ -155,8 +159,6 @@ def check_command(
     """
     from cobrastyle.check import UsageCollector, check_jinja2
 
-    if "" not in sys.path and "." not in sys.path:
-        sys.path.insert(0, "")
     environment = adapt_target(import_target(target))
     collector = UsageCollector()
     try:

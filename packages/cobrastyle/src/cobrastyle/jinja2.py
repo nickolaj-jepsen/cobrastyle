@@ -19,7 +19,7 @@ from cobrastyle.fragments import fragment_links_html
 from cobrastyle.manifest import Manifest, ModuleEntry
 from cobrastyle.paths import normalize_path
 from cobrastyle.resolvers import FileResolver, HasUrlPrefix
-from cobrastyle.serve import hot_reload_script_html
+from cobrastyle.serve import stylesheet_links_html
 from cobrastyle.source import StyleSource
 
 if TYPE_CHECKING:
@@ -218,6 +218,7 @@ class CobrastyleExtension(Extension):
         extended(environment).globals.setdefault("cx", cx)
         extended(environment).globals[_PAGE_GLOBAL] = self._enter_page
         self._manager: CobrastyleManager | None = None
+        self._manager_lock = threading.Lock()
         # Parse-time hook observing (assign target node, module path, class map)
         self._binding_recorder: Callable[[nodes.Node, str, dict[str, str]], None] | None = None
         # Module paths statically imported by each compiled template
@@ -236,24 +237,29 @@ class CobrastyleExtension(Extension):
 
     @property
     def manager(self) -> CobrastyleManager:
+        # Double-checked: first accesses race on threaded dev servers, and a losing
+        # instance would pin any SSE connection that captured it to a manager no
+        # future compile populates — hot reload would silently die for that tab.
         if self._manager is None:
-            environment = extended(self.environment)
-            if environment.cobrastyle_resolver is None:
-                raise RuntimeError(
-                    "No stylesheet resolver configured; call cobrastyle.jinja2.configure() "
-                    "with resolver= (dev) or manifest= (prod) before loading templates."
-                )
-            from cobrastyle.manager import CobrastyleManager
+            with self._manager_lock:
+                if self._manager is None:
+                    environment = extended(self.environment)
+                    if environment.cobrastyle_resolver is None:
+                        raise RuntimeError(
+                            "No stylesheet resolver configured; call cobrastyle.jinja2.configure() "
+                            "with resolver= (dev) or manifest= (prod) before loading templates."
+                        )
+                    from cobrastyle.manager import CobrastyleManager
 
-            self._manager = CobrastyleManager(
-                environment.cobrastyle_resolver,
-                minify=environment.cobrastyle_minify,
-                module_pattern=environment.cobrastyle_module_pattern,
-                underscore_aliases=environment.cobrastyle_underscore_aliases,
-                targets=environment.cobrastyle_targets,
-                analyze_dependencies=environment.cobrastyle_analyze_dependencies,
-                source_map=environment.cobrastyle_source_map,
-            )
+                    self._manager = CobrastyleManager(
+                        environment.cobrastyle_resolver,
+                        minify=environment.cobrastyle_minify,
+                        module_pattern=environment.cobrastyle_module_pattern,
+                        underscore_aliases=environment.cobrastyle_underscore_aliases,
+                        targets=environment.cobrastyle_targets,
+                        analyze_dependencies=environment.cobrastyle_analyze_dependencies,
+                        source_map=environment.cobrastyle_source_map,
+                    )
         return self._manager
 
     def preprocess(self, source: str, name: str | None, filename: str | None = None) -> str:
@@ -373,13 +379,9 @@ class CobrastyleRuntime:
         script that live-swaps those links as their sources change.
         """
         used: list[str] = context.vars.get(_USED_KEY, [])
-        markup = Markup("").join(
-            Markup('<link rel="stylesheet" href="{}" />').format(self._extension.stylesheet_url(path)) for path in used
-        )
+        urls = [self._extension.stylesheet_url(path) for path in used]
         hot_reload = extended(self._extension.environment).cobrastyle_hot_reload
-        if hot_reload is not None:
-            markup += Markup(hot_reload_script_html(hot_reload))
-        return markup
+        return Markup(stylesheet_links_html(urls, hot_reload_prefix=hot_reload))
 
     @pass_context
     def fragment_links(self, context: Context, nonce: str | None = None) -> Markup:

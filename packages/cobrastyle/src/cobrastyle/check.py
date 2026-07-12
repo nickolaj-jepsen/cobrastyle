@@ -6,8 +6,12 @@ from typing import TYPE_CHECKING, NamedTuple
 
 from jinja2 import nodes
 
-from cobrastyle.build import DEFAULT_GLOBS, BuildError, _enumerate, handle_compile_failure
-from cobrastyle.jinja2 import CobrastyleExtension
+from cobrastyle.build import (
+    DEFAULT_GLOBS,
+    handle_compile_failure,
+    overlay_with_extension,
+    walk_template_sources,
+)
 
 if TYPE_CHECKING:
     from jinja2 import Environment
@@ -32,6 +36,9 @@ class TemplateScan:
     template: str
     # binding name → module path, one entry per {% cobrastyle %} tag
     bindings: list[tuple[str, str]] = field(default_factory=list)
+    # Name → line of its first cobrastyle binding (jinja only); references on
+    # earlier lines resolve from the render context, not the binding
+    binding_lineno: dict[str, int] = field(default_factory=dict)
     references: list[Reference] = field(default_factory=list)
     # Names (re)bound by anything other than a cobrastyle tag
     stored: set[str] = field(default_factory=set)
@@ -98,7 +105,9 @@ class UsageCollector:
     Resolution never produces a false positive: a reference is only flagged
     when its binding is provably a cobrastyle class map in the same template,
     and a module's exports only count as unused when every access to the map
-    was statically attributable.
+    was statically attributable. Attribution is line-ordered but otherwise
+    scope-insensitive: a binding inside a dead branch or another block still
+    governs later same-named references.
     """
 
     def __init__(self) -> None:
@@ -136,6 +145,8 @@ class UsageCollector:
                 fully_used.update(paths)
             for name, attr, lineno, display, subscript_first in scan.references:
                 verifiable = name in local and name not in tainted
+                if verifiable and lineno is not None and lineno < scan.binding_lineno.get(name, 0):
+                    verifiable = False  # precedes the binding: jinja resolves it from the render context
                 paths = local[name] if verifiable else global_bindings.get(name, set())
                 if not paths:
                     continue
@@ -220,12 +231,7 @@ def check_jinja2(
     a warning unless they mention cobrastyle or ``strict`` is set — then it's
     a :class:`BuildError`.
     """
-    check_env = environment.overlay()
-    extension = CobrastyleExtension.get(check_env)
-    if extension is None:
-        raise BuildError("CobrastyleExtension is not registered on the environment")
-    if check_env.loader is None:
-        raise BuildError("The environment has no loader; there are no templates to check")
+    check_env, extension = overlay_with_extension(environment)
 
     recorded: list[tuple[nodes.Node, str]] = []
 
@@ -234,11 +240,7 @@ def check_jinja2(
         recorded.append((target, path))
 
     extension._binding_recorder = record
-    for name in _enumerate(check_env, globs, extra_templates):
-        try:
-            source, filename, _ = check_env.loader.get_source(check_env, name)
-        except Exception as exc:
-            raise BuildError(f"Cannot load template {name!r}: {exc}") from exc
+    for name, source, filename in walk_template_sources(check_env, globs, extra_templates):
         recorded.clear()
         try:
             ast = check_env.parse(source, name=name, filename=filename)
@@ -255,6 +257,9 @@ def scan_jinja2_ast(template: str, ast: nodes.Template, bindings: list[tuple[nod
     for target, path in bindings:
         if isinstance(target, nodes.Name):
             scan.bindings.append((target.name, path))
+            lineno = getattr(target, "lineno", None)
+            if lineno is not None and lineno < scan.binding_lineno.get(target.name, lineno + 1):
+                scan.binding_lineno[target.name] = lineno
             binding_targets.add(id(target))
 
     consumed: set[int] = set()

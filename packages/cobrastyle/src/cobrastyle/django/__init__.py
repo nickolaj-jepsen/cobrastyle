@@ -59,17 +59,30 @@ def configure_from_settings(env: Environment) -> None:
     """Apply the ``COBRASTYLE`` settings dict to an environment; see :func:`environment`."""
     config = app_config()
     common = common_options(config)
-    if config.get("DEV", settings.DEBUG):
-        # Default-on: the documented dev setup includes cobrastyle.django.urls,
-        # which serves the events endpoint. COBRASTYLE["HOT_RELOAD"] = False opts out.
-        configure(env, resolver=dev_resolver(config), hot_reload=config.get("HOT_RELOAD", True), **common)
+    if is_dev(config):
+        configure(env, resolver=dev_resolver(config), hot_reload=hot_reload_enabled(config), **common)
     else:
-        manifest = config.get("MANIFEST", output_dir(config) / "manifest.json")
-        configure(env, manifest=manifest, url_map=static_url_map(config), **common)
+        configure(env, manifest=manifest_source(config), url_map=static_url_map(config), **common)
 
 
 def app_config() -> CobrastyleSettings:
     return getattr(settings, "COBRASTYLE", CobrastyleSettings())
+
+
+def is_dev(config: CobrastyleSettings) -> bool:
+    """Whether cobrastyle runs in dev (compile-on-demand) mode; follows DEBUG unless DEV overrides."""
+    return config.get("DEV", settings.DEBUG)
+
+
+def hot_reload_enabled(config: CobrastyleSettings) -> bool:
+    """Default-on: the documented dev setup includes cobrastyle.django.urls, which
+    serves the events endpoint. ``COBRASTYLE["HOT_RELOAD"] = False`` opts out."""
+    return config.get("HOT_RELOAD", True)
+
+
+def manifest_source(config: CobrastyleSettings) -> Manifest | str | Path:
+    """The manifest (or its path) the prod runtime reads."""
+    return config.get("MANIFEST", output_dir(config) / "manifest.json")
 
 
 def common_options(config: CobrastyleSettings) -> ConfigureOptions:

@@ -18,6 +18,8 @@ from cobrastyle.manifest import AssetEntry, Manifest, ModuleEntry
 from cobrastyle.paths import normalize_path
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from cobrastyle.manager import Stylesheet
     from cobrastyle.resolvers import FileResolver
 
@@ -28,7 +30,10 @@ DEFAULT_GLOBS = ("*.html", "*.jinja", "*.jinja2", "*.j2")
 # lightningcss's own default: compact, unlike the readable dev DEV_MODULE_PATTERN
 BUILD_MODULE_PATTERN = "[hash]_[local]"
 
-# scheme:, protocol-relative, or same-document fragment — passed through untouched
+# scheme:, protocol-relative, or same-document fragment — passed through untouched.
+# Must agree with is_external in cobrastyle-lightningcss/src/lib.rs: the bundler
+# decides which @imports stay external, this regex re-classifies the survivors
+# (test_external_url_classification_matches_the_bundler pins the agreement).
 _EXTERNAL_URL = re.compile(r"^(?:[a-z][a-z0-9+.-]*:|//|#)", re.IGNORECASE)
 
 
@@ -82,6 +87,31 @@ def build(
     )
 
 
+def overlay_with_extension(environment: Environment) -> tuple[Environment, CobrastyleExtension]:
+    """An overlay of ``environment`` plus its bound extension, validated for a template walk."""
+    overlay = environment.overlay()
+    extension = CobrastyleExtension.get(overlay)
+    if extension is None:
+        raise BuildError("CobrastyleExtension is not registered on the environment")
+    if overlay.loader is None:
+        raise BuildError("The environment has no loader; there are no templates to process")
+    return overlay, extension
+
+
+def walk_template_sources(
+    environment: Environment, globs: tuple[str, ...], extra_templates: tuple[str, ...]
+) -> Iterator[tuple[str, str, str | None]]:
+    """Yield (name, source, filename) for every matching template; BuildError when one cannot load."""
+    loader = environment.loader
+    assert loader is not None  # overlay_with_extension already rejected loaderless environments
+    for name in _enumerate(environment, globs, extra_templates):
+        try:
+            source, filename, _ = loader.get_source(environment, name)
+        except Exception as exc:
+            raise BuildError(f"Cannot load template {name!r}: {exc}") from exc
+        yield name, source, filename
+
+
 def collect_jinja2(
     environment: Environment,
     *,
@@ -91,12 +121,7 @@ def collect_jinja2(
     minify: bool = True,
 ) -> CollectedTemplates:
     """Walk the environment's templates; return the pages, compiled stylesheets, and their resolver."""
-    build_env = environment.overlay()
-    extension = CobrastyleExtension.get(build_env)
-    if extension is None:
-        raise BuildError("CobrastyleExtension is not registered on the environment")
-    if build_env.loader is None:
-        raise BuildError("The environment has no loader; there are no templates to build")
+    build_env, extension = overlay_with_extension(environment)
     if extended(build_env).cobrastyle_manifest is not None:
         raise BuildError(
             "The environment is configured in manifest (prod) mode; the build compiles from source. "
@@ -112,13 +137,11 @@ def collect_jinja2(
     extension._manager = None
 
     pages: dict[str, list[str]] = {}
-    for name in _enumerate(build_env, globs, extra_templates):
+    for name, source, filename in walk_template_sources(build_env, globs, extra_templates):
         try:
-            source, filename, _ = build_env.loader.get_source(build_env, name)
-        except Exception as exc:
-            raise BuildError(f"Cannot load template {name!r}: {exc}") from exc
-        try:
-            build_env.compile(source, name=name, filename=filename)
+            # parse(), not compile(): the walk only needs the extension's preprocess/
+            # parse side effects, and codegen roughly doubles the per-template cost.
+            build_env.parse(source, name=name, filename=filename)
         except Exception as exc:
             handle_compile_failure(name, source, exc, strict)
             continue

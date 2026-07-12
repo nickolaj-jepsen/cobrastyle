@@ -5,10 +5,10 @@ from typing import TYPE_CHECKING, Any
 from django.template.base import FilterExpression, Node, NodeList, Origin, Variable
 from django.template.defaulttags import ForNode, WithNode
 
-from cobrastyle.build import DEFAULT_GLOBS, handle_compile_failure
+from cobrastyle.build import DEFAULT_GLOBS
 from cobrastyle.check import Reference, TemplateScan, UsageCollector
-from cobrastyle.django.build import _template_files, reset_loaders
-from cobrastyle.django.runtime import DTLRuntime, set_runtime
+from cobrastyle.django.build import _parse_templates, _throwaway_runtime
+from cobrastyle.django.runtime import DTLRuntime
 from cobrastyle.django.templatetags.cobrastyle import CobrastyleNode
 from cobrastyle.manager import CobrastyleManager
 
@@ -41,24 +41,9 @@ def check_dtl(
     risking a false positive.
     """
     manager = CobrastyleManager(resolver, **manager_options)
-    set_runtime(DTLRuntime(manager=manager))
-    try:
-        # Django caches parsed templates even in DEBUG (4.1+); {% cobrastyle %}
-        # fires at parse time, so anything rendered earlier in this process
-        # would be scanned from a stale cache without a reset.
-        reset_loaders(backend)
-        for name, file in _template_files(backend.engine, globs):
-            try:
-                template = backend.get_template(name)
-            except Exception as exc:
-                handle_compile_failure(name, file.read_text(encoding="utf-8", errors="replace"), exc, strict)
-                continue
+    with _throwaway_runtime(backend, DTLRuntime(manager=manager)):
+        for name, template in _parse_templates(backend, globs, strict):
             collector.add(_scan_nodelist(name, template.template.nodelist, collector))
-    finally:
-        set_runtime(None)
-        # Symmetric reset: templates cached now were parsed under the throwaway
-        # runtime, whose page records die with it — later renders must re-parse
-        reset_loaders(backend)
 
 
 def _scan_nodelist(template_name: str, nodelist: NodeList, collector: UsageCollector) -> TemplateScan:

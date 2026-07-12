@@ -4,13 +4,10 @@ from typing import Any
 
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
-from django.template import engines
-from django.template.backends.django import DjangoTemplates
-from django.template.backends.jinja2 import Jinja2
 
 from cobrastyle.build import DEFAULT_GLOBS, BuildError, collect_jinja2, emit
 from cobrastyle.django import app_config, common_options, dev_resolver, output_dir, static_prefix, static_url_map
-from cobrastyle.jinja2 import CobrastyleExtension, configure
+from cobrastyle.django.management import dev_overlay, find_backends
 from cobrastyle.manager import Stylesheet
 
 
@@ -38,20 +35,7 @@ class Command(BaseCommand):
         parser.add_argument("--no-minify", action="store_true", help="Emit readable CSS instead of minified.")
 
     def handle(self, *args: Any, **options: Any) -> None:
-        jinja_env = None
-        dtl_backend = None
-        for backend in engines.all():
-            if isinstance(backend, Jinja2) and jinja_env is None:
-                if CobrastyleExtension.get(backend.env) is not None:
-                    jinja_env = backend.env
-            elif isinstance(backend, DjangoTemplates) and dtl_backend is None:
-                dtl_backend = backend
-        if jinja_env is None and dtl_backend is None:
-            raise CommandError(
-                "No usable template engine found: configure a Jinja2 backend with "
-                "'cobrastyle.django.environment' or a DjangoTemplates backend in TEMPLATES."
-            )
-
+        jinja_env, dtl_backend = find_backends()
         config = app_config()
         out = Path(options["out"]) if options["out"] else output_dir(config)
         static_url = settings.STATIC_URL or "/static/"
@@ -74,11 +58,7 @@ class Command(BaseCommand):
         stylesheets: dict[str, Stylesheet] = {}
         try:
             if jinja_env is not None:
-                # The runtime env may be in prod (manifest) mode; the build always
-                # compiles from source, so reconfigure a throwaway overlay into dev mode.
-                build_env = jinja_env.overlay()
-                build_env.bytecode_cache = None
-                configure(build_env, resolver=resolver, **common_options(config))
+                build_env = dev_overlay(jinja_env, config, resolver)
                 collected = collect_jinja2(
                     build_env,
                     globs=globs,

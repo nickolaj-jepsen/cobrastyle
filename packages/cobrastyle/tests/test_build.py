@@ -174,6 +174,43 @@ def test_globs_filter_templates(project):
     assert set(manifest.modules) == {"styles/button.css", "styles/card.css"}
 
 
+@pytest.mark.parametrize(
+    ("specifier", "external"),
+    [
+        ("https://cdn.example.com/a.css", True),
+        ("HTTPS://cdn.example.com/a.css", True),
+        ("data:text/css,.a{}", True),
+        ("custom+scheme.x:y", True),
+        ("//cdn.example.com/a.css", True),
+        ("#fragment", True),
+        ("./theme.css", False),
+        ("theme.css", False),
+        ("sub/theme.css", False),
+        ("1:not-a-scheme.css", False),
+    ],
+)
+def test_external_url_classification_matches_the_bundler(specifier, external):
+    """build.py's _EXTERNAL_URL and the Rust bundler's is_external must agree (see both comments)."""
+    from cobrastyle.build import _EXTERNAL_URL
+    from cobrastyle_lightningcss import bundle
+
+    assert bool(_EXTERNAL_URL.match(specifier)) is external
+
+    reads: list[str] = []
+
+    class Provider:
+        def read(self, path: str) -> str:
+            reads.append(path)
+            return f'@import "{specifier}";' if path == "entry.css" else ".x {}"
+
+        def resolve(self, s: str, f: str) -> str:
+            return "resolved.css"
+
+    bundle(filename="entry.css", provider=Provider())
+    bundler_external = "resolved.css" not in reads
+    assert bundler_external is external
+
+
 def test_default_globs_cover_the_jinja2_suffix():
     source = '{% cobrastyle styles = "test.css" %}{{ styles.a }}'
     environment = Environment(loader=DictLoader({"page.jinja2": source}), extensions=[CobrastyleExtension])

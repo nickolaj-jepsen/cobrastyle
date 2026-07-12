@@ -325,7 +325,10 @@ impl std::fmt::Display for ProviderError {
 
 impl std::error::Error for ProviderError {}
 
-/// scheme:, protocol-relative, or same-document fragment — kept as an external `@import`
+/// scheme:, protocol-relative, or same-document fragment — kept as an external `@import`.
+/// Must agree with `_EXTERNAL_URL` in cobrastyle's build.py, which re-classifies the
+/// surviving external imports; a specifier this accepts but the regex rejects becomes
+/// a spurious `BuildError`.
 fn is_external(specifier: &str) -> bool {
     if specifier.starts_with("//") || specifier.starts_with('#') {
         return true;

@@ -34,6 +34,18 @@ def test_valid_references_pass():
     assert report.failures() == []
 
 
+def test_reference_before_the_binding_is_not_flagged():
+    # jinja resolves the pre-assignment load from the render context, so a
+    # same-named context variable makes this a valid template
+    report = run_check(
+        {"index.html": '{{ styles.extra }}\n{% cobrastyle styles = "page.css" %}{{ styles.title }}'},
+        {"page.css": ".title { color: red }"},
+    )
+
+    assert report.ok
+    assert report.unused == {}
+
+
 def test_unknown_class_reports_location_and_suggestion():
     report = run_check(
         {"index.html": '{% cobrastyle styles = "page.css" %}\n<b class="{{ styles.buttom }}">x</b>'},

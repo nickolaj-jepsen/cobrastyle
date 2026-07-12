@@ -103,6 +103,18 @@ def hot_reload_script_html(url_prefix: str) -> str:
     return f'<script src="{prefix}{CLIENT_SCRIPT_PATH}" data-events="{prefix}{EVENTS_PATH}" defer></script>'
 
 
+def stylesheet_links_html(urls: Iterable[str], *, hot_reload_prefix: str | None = None) -> str:
+    """``<link>`` markup for ``urls``, plus the hot-reload client script when a prefix is set.
+
+    The one implementation of the links markup both template engines render;
+    everything interpolated is escaped, so the result is safe to mark safe.
+    """
+    links = "".join(f'<link rel="stylesheet" href="{html.escape(url, quote=True)}" />' for url in urls)
+    if hot_reload_prefix is not None:
+        links += hot_reload_script_html(hot_reload_prefix)
+    return links
+
+
 def _freshness_token(manager: CobrastyleManager, stylesheet: Stylesheet) -> tuple[object, ...]:
     tokens: list[object] = []
     for dep, _ in stylesheet.dep_mtimes:
@@ -138,6 +150,23 @@ def event_frames(manager: CobrastyleManager, seen: dict[str, tuple[object, ...]]
     ]
 
 
+def _tick(
+    manager: CobrastyleManager,
+    seen: dict[str, tuple[object, ...]],
+    idle: float,
+    interval: float,
+    heartbeat: float,
+) -> tuple[list[bytes], float]:
+    """One poll of the events stream: (frames to emit, new idle time)."""
+    frames = event_frames(manager, seen)
+    if frames:
+        return frames, 0.0
+    idle += interval
+    if idle >= heartbeat:
+        return [b": keep-alive\n\n"], 0.0
+    return [], idle
+
+
 def watch_events(
     manager: CobrastyleManager,
     *,
@@ -155,15 +184,8 @@ def watch_events(
     idle = 0.0
     while True:
         sleep(interval)
-        frames = event_frames(manager, seen)
-        if frames:
-            yield from frames
-            idle = 0.0
-        else:
-            idle += interval
-            if idle >= heartbeat:
-                yield b": keep-alive\n\n"
-                idle = 0.0
+        frames, idle = _tick(manager, seen, idle, interval, heartbeat)
+        yield from frames
 
 
 def serve(
@@ -183,7 +205,12 @@ def serve(
     if method not in ("GET", "HEAD"):
         return None
     try:
-        resource = _CLIENT_RESOURCE if path == CLIENT_SCRIPT_PATH else get_resource(manager, path)
+        negotiated = _negotiate(manager, path)
+        if negotiated is None:
+            return None
+        if _etag_matches(if_none_match, negotiated.etag):
+            return Served(304, [("ETag", negotiated.etag)], b"")
+        body = negotiated.body()
     except Exception as exc:
         if not _is_compile_error(exc):
             raise
@@ -197,17 +224,70 @@ def serve(
         # 200 without an ETag: browsers only apply 2xx stylesheets, and the next
         # request must revalidate so the fix (or a new error) always shows.
         return Served(200, headers, body if method == "GET" else b"")
-    if resource is None:
-        return None
-    if _etag_matches(if_none_match, resource.etag):
-        return Served(304, [("ETag", resource.etag)], b"")
     headers = [
-        ("Content-Type", resource.content_type),
-        ("Content-Length", str(len(resource.body))),
-        ("ETag", resource.etag),
+        ("Content-Type", negotiated.content_type),
+        ("Content-Length", str(len(body))),
+        ("ETag", negotiated.etag),
         ("Cache-Control", CACHE_CONTROL),
     ]
-    return Served(200, headers, resource.body if method == "GET" else b"")
+    return Served(200, headers, body if method == "GET" else b"")
+
+
+class Negotiated(NamedTuple):
+    """A resolved resource whose ETag is known before its body is built.
+
+    ``body`` runs only on an ETag miss, so 304 revalidations skip the
+    source-map encoding (CSS) or the file read (raw assets) entirely.
+    """
+
+    etag: str
+    content_type: str
+    body: Callable[[], bytes]
+
+
+def _negotiate(manager: CobrastyleManager, path: str) -> Negotiated | None:
+    if path == CLIENT_SCRIPT_PATH:
+        resource = _CLIENT_RESOURCE
+        return Negotiated(resource.etag, resource.content_type, lambda: resource.body)
+    if path.endswith(".css"):
+        return _negotiate_css(manager, path)
+    return _negotiate_raw(manager, path)
+
+
+def _negotiate_css(manager: CobrastyleManager, path: str) -> Negotiated | None:
+    try:
+        path = normalize_path(path)
+    except StylesheetPathError:
+        return None
+    try:
+        stylesheet = manager.import_module(path)
+    except StylesheetNotFoundError as exc:
+        if exc.path == path:
+            return None
+        raise  # a missing @import or composes dependency is a compile failure, not a 404
+
+    def body() -> bytes:
+        code = stylesheet.code
+        if stylesheet.map is not None:
+            encoded = base64.b64encode(stylesheet.map.encode()).decode()
+            code = f"{code}\n/*# sourceMappingURL=data:application/json;base64,{encoded} */"
+        return code.encode()
+
+    return Negotiated(_etag(stylesheet), CONTENT_TYPE, body)
+
+
+def _negotiate_raw(manager: CobrastyleManager, path: str) -> Negotiated | None:
+    content_type = mimetypes.guess_type(path)[0] or "application/octet-stream"
+    try:
+        mtime = manager.resolver.mtime(path)
+        if mtime is None:
+            # No freshness token (in-memory sources): the ETag must hash the content
+            data = manager.resolver.read_bytes(path)
+            digest = hashlib.sha256(data).hexdigest()[:16]
+            return Negotiated(f'W/"{digest}"', content_type, lambda: data)
+    except _RESOLVE_ERRORS:
+        return None
+    return Negotiated(f'W/"{mtime}"', content_type, lambda: manager.resolver.read_bytes(path))
 
 
 def get_css(manager: CobrastyleManager, path: str) -> tuple[str, str] | None:
@@ -219,21 +299,10 @@ def get_css(manager: CobrastyleManager, path: str) -> tuple[str, str] | None:
     """
     if not path.endswith(".css"):
         return None
-    try:
-        path = normalize_path(path)
-    except StylesheetPathError:
+    negotiated = _negotiate_css(manager, path)
+    if negotiated is None:
         return None
-    try:
-        stylesheet = manager.import_module(path)
-    except StylesheetNotFoundError as exc:
-        if exc.path == path:
-            return None
-        raise  # a missing @import or composes dependency is a compile failure, not a 404
-    code = stylesheet.code
-    if stylesheet.map is not None:
-        encoded = base64.b64encode(stylesheet.map.encode()).decode()
-        code = f"{code}\n/*# sourceMappingURL=data:application/json;base64,{encoded} */"
-    return code, _etag(stylesheet)
+    return negotiated.body().decode(), negotiated.etag
 
 
 def get_resource(manager: CobrastyleManager, path: str) -> Resource | None:
@@ -242,20 +311,10 @@ def get_resource(manager: CobrastyleManager, path: str) -> Resource | None:
     Raw serving keeps ``url()`` references (icons, fonts) working in dev,
     where compiled CSS is served relative to the resolver root.
     """
-    if path.endswith(".css"):
-        result = get_css(manager, path)
-        if result is None:
-            return None
-        code, etag = result
-        return Resource(code.encode(), CONTENT_TYPE, etag)
-
-    try:
-        data = manager.resolver.read_bytes(path)
-    except _RESOLVE_ERRORS:
+    negotiated = _negotiate_css(manager, path) if path.endswith(".css") else _negotiate_raw(manager, path)
+    if negotiated is None:
         return None
-    content_type = mimetypes.guess_type(path)[0] or "application/octet-stream"
-    digest = hashlib.sha256(data).hexdigest()[:16]
-    return Resource(data, content_type, f'W/"{digest}"')
+    return Resource(negotiated.body(), negotiated.content_type, negotiated.etag)
 
 
 def _is_compile_error(exc: Exception) -> bool:
@@ -386,15 +445,9 @@ class CobrastyleASGIApp:
                 done, _ = await asyncio.wait({disconnected}, timeout=EVENTS_POLL_INTERVAL)
                 if disconnected in done:
                     return
-                frames = event_frames(self.manager, seen)
-                if not frames:
-                    idle += EVENTS_POLL_INTERVAL
-                    if idle >= EVENTS_HEARTBEAT:
-                        frames = [b": keep-alive\n\n"]
-                if frames:
-                    idle = 0.0
-                    for frame in frames:
-                        await send({"type": "http.response.body", "body": frame, "more_body": True})
+                frames, idle = _tick(self.manager, seen, idle, EVENTS_POLL_INTERVAL, EVENTS_HEARTBEAT)
+                for frame in frames:
+                    await send({"type": "http.response.body", "body": frame, "more_body": True})
         finally:
             disconnected.cancel()
 

@@ -3,7 +3,6 @@ from __future__ import annotations
 import threading
 from typing import TYPE_CHECKING
 
-from django.conf import settings
 from django.template import Origin, TemplateSyntaxError
 
 from cobrastyle.errors import StylesheetNotFoundError
@@ -83,6 +82,11 @@ _runtime: DTLRuntime | None = None
 def get_runtime() -> DTLRuntime:
     """The settings-driven runtime singleton (see ``COBRASTYLE`` in cobrastyle.django)."""
     global _runtime
+    # Lock-free fast path: this sits on every {% cobrastyle_links %} render, and a
+    # fully-constructed runtime is published atomically by the assignment below.
+    runtime = _runtime
+    if runtime is not None:
+        return runtime
     with _lock:
         if _runtime is None:
             _runtime = _create()
@@ -97,21 +101,27 @@ def set_runtime(runtime: DTLRuntime | None) -> None:
 
 
 def _create() -> DTLRuntime:
-    from cobrastyle.django import app_config, common_options, dev_resolver, output_dir, static_url_map
+    from cobrastyle.django import (
+        app_config,
+        common_options,
+        dev_resolver,
+        hot_reload_enabled,
+        is_dev,
+        manifest_source,
+        static_url_map,
+    )
 
     config = app_config()
-    if config.get("DEV", settings.DEBUG):
+    if is_dev(config):
         from cobrastyle.manager import CobrastyleManager
 
         resolver = dev_resolver(config)
-        # Default-on: the documented dev setup includes cobrastyle.django.urls,
-        # which serves the events endpoint. COBRASTYLE["HOT_RELOAD"] = False opts out.
-        hot_reload_prefix = resolver.url_prefix if config.get("HOT_RELOAD", True) else None
+        hot_reload_prefix = resolver.url_prefix if hot_reload_enabled(config) else None
         return DTLRuntime(
             manager=CobrastyleManager(resolver, **common_options(config)),
             hot_reload_prefix=hot_reload_prefix,
         )
-    manifest = config.get("MANIFEST", output_dir(config) / "manifest.json")
+    manifest = manifest_source(config)
     if not isinstance(manifest, Manifest):
         manifest = Manifest.load(manifest)
     return DTLRuntime(manifest=manifest, url_map=static_url_map(config))

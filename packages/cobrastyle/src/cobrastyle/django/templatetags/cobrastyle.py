@@ -1,14 +1,14 @@
 from django import template
 from django.template import TemplateSyntaxError
 from django.template.base import FilterExpression
-from django.utils.html import conditional_escape, escape
+from django.utils.html import conditional_escape
 from django.utils.safestring import SafeString, mark_safe
 
 from cobrastyle.cx import cx
 from cobrastyle.django.runtime import get_runtime
 from cobrastyle.fragments import fragment_links_html
 from cobrastyle.paths import normalize_path
-from cobrastyle.serve import hot_reload_script_html
+from cobrastyle.serve import stylesheet_links_html
 
 register = template.Library()
 
@@ -85,10 +85,8 @@ class LinksNode(template.Node):
         runtime = get_runtime()
         # self.origin is stamped by the parser: the template this tag lives in
         paths = _page_paths(context, getattr(self, "origin", None), self.extra)
-        links = "".join(f'<link rel="stylesheet" href="{escape(runtime.url_for(path))}" />' for path in paths)
-        if runtime.hot_reload_prefix is not None:
-            links += hot_reload_script_html(runtime.hot_reload_prefix)
-        return mark_safe(links)
+        urls = [runtime.url_for(path) for path in paths]
+        return mark_safe(stylesheet_links_html(urls, hot_reload_prefix=runtime.hot_reload_prefix))
 
 
 @register.tag("cobrastyle_fragment_links")

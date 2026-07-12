@@ -1,18 +1,52 @@
 from __future__ import annotations
 
 import fnmatch
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from cobrastyle.build import BUILD_MODULE_PATTERN, DEFAULT_GLOBS, CollectedTemplates, handle_compile_failure
-from cobrastyle.django.runtime import DTLRuntime, get_runtime, set_runtime
+from cobrastyle.django.runtime import DTLRuntime, set_runtime
 from cobrastyle.jinja2 import ConfigureOptions
 from cobrastyle.manager import CobrastyleManager
 from cobrastyle.resolvers import FileResolver
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from django.template.backends.django import DjangoTemplates
+    from django.template.backends.django import Template as DjangoTemplate
     from django.template.engine import Engine
+
+
+@contextmanager
+def _throwaway_runtime(backend: DjangoTemplates, runtime: DTLRuntime) -> Iterator[None]:
+    """Install ``runtime`` for a template walk over fresh loader caches, resetting both on exit.
+
+    Django caches parsed templates even in DEBUG (4.1+) and ``{% cobrastyle %}``
+    fires at parse time, so templates rendered earlier in this process would
+    silently drop out of the walk without the first reset — and templates
+    cached during the walk were parsed under the throwaway runtime, whose page
+    records die with it, so later renders must re-parse.
+    """
+    set_runtime(runtime)
+    try:
+        reset_loaders(backend)
+        yield
+    finally:
+        set_runtime(None)
+        reset_loaders(backend)
+
+
+def _parse_templates(
+    backend: DjangoTemplates, globs: tuple[str, ...], strict: bool
+) -> Iterator[tuple[str, DjangoTemplate]]:
+    """Yield (name, parsed template) for every matching template, applying the build's failure rules."""
+    for name, file in _template_files(backend.engine, globs):
+        try:
+            yield name, backend.get_template(name)
+        except Exception as exc:
+            handle_compile_failure(name, file.read_text(encoding="utf-8", errors="replace"), exc, strict)
 
 
 def collect_dtl(
@@ -35,22 +69,9 @@ def collect_dtl(
         options["module_pattern"] = BUILD_MODULE_PATTERN
     manager = CobrastyleManager(resolver, analyze_dependencies=True, **options)
     runtime = DTLRuntime(manager=manager)
-    set_runtime(runtime)
-    try:
-        # Django caches parsed templates even in DEBUG (4.1+); {% cobrastyle %}
-        # fires at parse time, so anything rendered earlier in this process
-        # would silently drop out of the build without a reset.
-        reset_loaders(backend)
-        for name, file in _template_files(backend.engine, globs):
-            try:
-                backend.get_template(name)
-            except Exception as exc:
-                handle_compile_failure(name, file.read_text(encoding="utf-8", errors="replace"), exc, strict)
-    finally:
-        set_runtime(None)
-        # Symmetric reset: templates cached now were parsed under the throwaway
-        # runtime, whose page records die with it — later renders must re-parse
-        reset_loaders(backend)
+    with _throwaway_runtime(backend, runtime):
+        for _ in _parse_templates(backend, globs, strict):
+            pass
 
     pages = {
         runtime.page_names[origin_name]: paths
@@ -84,6 +105,3 @@ def _template_files(engine: Engine, globs: tuple[str, ...]) -> list[tuple[str, P
                 # First directory wins, matching the filesystem loader's precedence
                 files.setdefault(name, file)
     return sorted(files.items())
-
-
-__all__ = ["collect_dtl", "get_runtime"]
