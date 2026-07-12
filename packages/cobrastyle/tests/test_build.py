@@ -174,6 +174,16 @@ def test_globs_filter_templates(project):
     assert set(manifest.modules) == {"styles/button.css", "styles/card.css"}
 
 
+def test_default_globs_cover_the_jinja2_suffix():
+    source = '{% cobrastyle styles = "test.css" %}{{ styles.a }}'
+    environment = Environment(loader=DictLoader({"page.jinja2": source}), extensions=[CobrastyleExtension])
+    configure(environment, resolver=InMemoryResolver({"test.css": ".a { color: red; }"}))
+
+    collected = collect_jinja2(environment)
+
+    assert collected.pages == {"page.jinja2": ["test.css"]}
+
+
 def test_function_loader_requires_extra_templates():
     source = '{% cobrastyle styles = "test.css" %}{{ styles.a }}'
     environment = Environment(loader=FunctionLoader(lambda name: source), extensions=[CobrastyleExtension])

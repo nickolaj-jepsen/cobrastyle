@@ -42,7 +42,7 @@ def fragment_links_html(urls: list[str], *, nonce: str | None = None) -> str:
         "document.querySelectorAll('link[rel=\"stylesheet\"]').forEach(function(link){"
         'have[(link.getAttribute("href")||"").split("?")[0]]=true;});'
         "var pending=[];"
-        f"{payload}.forEach(function(url){{if(have[url])return;"
+        f'{payload}.forEach(function(url){{if(have[url.split("?")[0]])return;'
         'var link=document.createElement("link");link.rel="stylesheet";link.href=url;'
         "pending.push(new Promise(function(resolve){link.onload=link.onerror=resolve;}));"
         "head.appendChild(link);});"

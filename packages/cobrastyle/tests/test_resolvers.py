@@ -42,6 +42,14 @@ def test_file_system_resolver(tmp_path):
     assert resolved.content == ".a {}"
 
 
+def test_file_system_resolver_normalizes_a_slashless_url_prefix(tmp_path):
+    (tmp_path / "a.css").write_text(".a {}")
+    resolver = FileSystemResolver(tmp_path, url_prefix="/styles")
+
+    assert resolver.url_prefix == "/styles/"
+    assert resolver.resolve("a.css").url == "/styles/a.css"
+
+
 def test_file_system_resolver_rejects_path_traversal(tmp_path):
     (tmp_path / "styles").mkdir()
     (tmp_path / "secret.css").write_text(".a {}")

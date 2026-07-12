@@ -56,7 +56,7 @@ class FileSystemResolver:
 
     def __init__(self, root: str | Path, url_prefix: str = "/static/"):
         self.root = Path(root).resolve()
-        self.url_prefix = url_prefix
+        self.url_prefix = url_prefix if url_prefix.endswith("/") else url_prefix + "/"
 
     def _path(self, filename: str) -> Path:
         path = (self.root / filename).resolve()

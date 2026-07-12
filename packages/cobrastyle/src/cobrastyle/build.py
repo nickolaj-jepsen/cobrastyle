@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_GLOBS = ("*.html", "*.jinja", "*.j2")
+DEFAULT_GLOBS = ("*.html", "*.jinja", "*.jinja2", "*.j2")
 
 # lightningcss's own default: compact, unlike the readable dev DEV_MODULE_PATTERN
 BUILD_MODULE_PATTERN = "[hash]_[local]"

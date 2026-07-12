@@ -92,6 +92,24 @@ def test_etag_changes_with_content(tmp_path):
     assert first[1] != second[1]
 
 
+def test_etag_covers_imported_files_with_same_length_edits(tmp_path):
+    (tmp_path / "page.css").write_text('@import "./theme.css";')
+    theme = tmp_path / "theme.css"
+    theme.write_text(".t { color: #111111; }")
+    os.utime(tmp_path / "page.css", (1000, 1000))
+    os.utime(theme, (1000, 1000))
+    manager = CobrastyleManager(FileSystemResolver(tmp_path))
+
+    first = get_css(manager, "page.css")
+    theme.write_text(".t { color: #222222; }")  # same byte length
+    os.utime(theme, (2000, 2000))
+    second = get_css(manager, "page.css")
+
+    assert first is not None
+    assert second is not None
+    assert first[1] != second[1]
+
+
 def test_serve_ignores_other_methods():
     manager = CobrastyleManager(InMemoryResolver({"test.css": ".a { color: red; }"}))
 
@@ -211,6 +229,35 @@ def test_wsgi_middleware_serves_raw_assets():
     assert status == "200 OK"
     assert headers["Content-Type"] == "image/svg+xml"
     assert body == b"<svg></svg>"
+
+
+def test_wsgi_middleware_normalizes_a_slashless_prefix():
+    manager = CobrastyleManager(
+        InMemoryResolver({"test.css": ".a { color: red; }"}), module_pattern="[local]", minify=True, source_map=False
+    )
+
+    def fallback(environ, start_response):
+        start_response("404 Not Found", [])
+        return [b"fallthrough"]
+
+    app = CobrastyleWSGIMiddleware(fallback, manager, url_prefix="/styles")
+
+    status, _, body = _wsgi_get(app, "/styles/test.css")
+    assert status == "200 OK"
+    assert body == b".a{color:red}"
+
+    environ = {"REQUEST_METHOD": "GET", "PATH_INFO": "/styles/__events__"}
+    captured = {}
+
+    def start_response(status, headers, exc_info=None):
+        captured["status"] = status
+        captured["headers"] = dict(headers)
+        return lambda data: None
+
+    stream = iter(app(environ, start_response))
+    assert captured["status"] == "200 OK"
+    assert captured["headers"]["Content-Type"] == "text/event-stream"
+    assert next(stream) == b": cobrastyle\n\n"
 
 
 def test_wsgi_middleware_never_serves_outside_the_resolver_root(tmp_path):

@@ -4,6 +4,7 @@ import pytest
 from jinja2 import DictLoader, Environment, TemplateSyntaxError
 
 from cobrastyle import InMemoryResolver
+from cobrastyle.fragments import fragment_links_html
 from cobrastyle.jinja2 import CobrastyleExtension, configure
 
 
@@ -308,6 +309,40 @@ def test_invalid_stylesheet_path():
     jinja = make_environment({})
     with pytest.raises(TemplateSyntaxError, match="relative to the resolver root"):
         jinja.from_string('{% cobrastyle styles = "../escape.css" %}')
+
+
+def test_recompiling_does_not_blank_page_tracking_mid_compile():
+    source = '{% cobrastyle styles = "test.css" %}'
+    jinja = make_environment({"test.css": ".a { color: red; }"}, templates={"page.html": source})
+    jinja.get_template("page.html")
+    extension = CobrastyleExtension.get(jinja)
+    assert extension is not None
+    assert extension.page_modules("page.html") == ["test.css"]
+
+    # A concurrent compile of the same page has preprocessed but not yet parsed the tag
+    extension.preprocess(source, "page.html")
+
+    assert extension.page_modules("page.html") == ["test.css"]
+
+
+def test_reconfigure_takes_effect():
+    jinja = make_environment({"a.css": ".a { color: red; }"})
+    jinja.from_string('{% cobrastyle styles = "a.css" %}').render()
+
+    configure(jinja, resolver=InMemoryResolver({"b.css": ".b { color: blue; }"}), module_pattern="[local]", minify=True)
+
+    extension = CobrastyleExtension.get(jinja)
+    assert extension is not None
+    assert extension.manager.minify is True
+    template = jinja.from_string('{% cobrastyle styles = "b.css" %}{{ styles.b }}')  # resolved by the new resolver
+    assert template.render() == "b"
+
+
+def test_fragment_links_dedup_ignores_query_strings():
+    html = fragment_links_html(["/static/a.css?v=123"])
+
+    # Both sides of the client-side dedup compare without query strings
+    assert 'have[url.split("?")[0]]' in html
 
 
 def test_cx_global():

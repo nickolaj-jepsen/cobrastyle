@@ -196,6 +196,21 @@ def test_dtl_dot_access_reaches_dict_method_named_class(project):
     assert "unused" not in stderr
 
 
+def test_dtl_dict_api_dot_access_is_not_flagged(project):
+    # styles.items resolves to the bound dict method when no such class exists —
+    # a valid template (iterating the class map), not an unknown-class reference
+    (project / "styles" / "page.css").write_text(".title { color: red; }")
+    (project / "templates" / "index.html").write_text(
+        '{% load cobrastyle %}{% cobrastyle "page.css" as styles %}'
+        "{% for name, cls in styles.items %}{{ name }}{% endfor %}{{ styles.keys }}"
+    )
+
+    stdout, stderr = run_check(project)
+
+    assert "OK" in stdout
+    assert "unused" not in stderr
+
+
 def test_rendering_after_check_still_links_stylesheets(project):
     from django.template import engines
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Self, TypedDict, cast, overload
@@ -63,10 +64,17 @@ def extended(environment: Environment) -> ExtendedEnvironment:
 
 
 class _CompileState(threading.local):
-    """The template currently being compiled, per thread."""
+    """The template currently being compiled, per thread.
+
+    ``page_paths`` collects the template's module paths until the first
+    ``{% cobrastyle %}`` tag publishes it into the extension's page registry —
+    deferred so a concurrent render never observes a half-built (or emptied)
+    entry for a page it is rendering.
+    """
 
     def __init__(self) -> None:
         self.page_id: str | None = None
+        self.page_paths: list[str] | None = None
 
 
 @overload
@@ -168,6 +176,11 @@ def configure(
     env.cobrastyle_module_pattern = module_pattern
     env.cobrastyle_targets = targets
     env.cobrastyle_source_map = source_map
+    # Drop the lazily-built manager so reconfiguration actually takes effect;
+    # templates already compiled keep the class maps they baked in.
+    extension = CobrastyleExtension.get(environment)
+    if extension is not None:
+        extension._manager = None
 
 
 class CobrastyleExtension(Extension):
@@ -244,20 +257,29 @@ class CobrastyleExtension(Extension):
         return self._manager
 
     def preprocess(self, source: str, name: str | None, filename: str | None = None) -> str:
-        # Either cache layer can skip preprocess/parse — never let a stale page_id leak into the next compile
+        # Either cache layer can skip preprocess/parse — never let stale state leak into the next compile
         self._compiling.page_id = None
+        self._compiling.page_paths = None
         if "cobrastyle" not in source:
             return source
         # Source-hashed, not a counter, so recompiling the same string (from_string
         # in a loop) reuses one registry entry instead of growing _pages forever
         page_id = name if name is not None else f"<anonymous-{hashlib.sha256(source.encode()).hexdigest()[:12]}>"
-        self._pages[page_id] = []
-        self._compiling.page_id = page_id
+        environment = self.environment
+        tag = re.compile(re.escape(environment.block_start_string) + r"[+-]?\s*cobrastyle\b")
+        if tag.search(source) is None:
+            # No tag ever fires: [] is the final value (the substring hit was e.g.
+            # {{ cobrastyle.links() }}), and publishing now keeps tag-removal edits fresh.
+            self._pages[page_id] = []
+        else:
+            # Deferred: parse() swaps the finished list in atomically, so a render
+            # racing this compile sees the previous complete entry, never an emptied one.
+            self._compiling.page_id = page_id
+            self._compiling.page_paths = []
         # Prepended without a newline so template line numbers stay intact. The
         # top-level set runs at render start — before any parent template renders —
         # which lets {{ cobrastyle.links() }} in an inherited <head> see this
         # template's stylesheets.
-        environment = self.environment
         return (
             f"{environment.block_start_string} set __cobrastyle__ = "
             f"{_PAGE_GLOBAL}({json.dumps(page_id)}) {environment.block_end_string}{source}"
@@ -285,11 +307,12 @@ class CobrastyleExtension(Extension):
             self._binding_recorder(target, path, classes)
 
         page_id = self._compiling.page_id
-        if page_id is not None:
-            page = self._pages[page_id]
+        page = self._compiling.page_paths
+        if page_id is not None and page is not None:
             for page_path in page_paths:
                 if page_path not in page:
                     page.append(page_path)
+            self._pages[page_id] = page
 
         return nodes.Assign(target, nodes.Const(classes)).set_lineno(lineno)
 

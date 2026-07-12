@@ -300,8 +300,8 @@ def _etag_matches(if_none_match: str | None, etag: str) -> bool:
 
 
 def _etag(stylesheet: Stylesheet) -> str:
-    if stylesheet.mtime is not None:
-        return f'W/"{stylesheet.mtime}-{len(stylesheet.code)}"'
+    # Content-hashed, never mtime-based: the entry's mtime misses edits to
+    # @imported files, and same-length edits would keep the length stable too.
     digest = hashlib.sha256(stylesheet.code.encode()).hexdigest()[:16]
     return f'W/"{digest}"'
 
@@ -312,7 +312,7 @@ class CobrastyleWSGIMiddleware:
     def __init__(self, app: WSGIApplication, manager: CobrastyleManager, url_prefix: str = "/static/"):
         self.app = app
         self.manager = manager
-        self.url_prefix = url_prefix
+        self.url_prefix = url_prefix if url_prefix.endswith("/") else url_prefix + "/"
 
     def __call__(self, environ: WSGIEnvironment, start_response: StartResponse) -> Iterable[bytes]:
         path = environ.get("PATH_INFO", "")
