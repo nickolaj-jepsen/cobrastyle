@@ -1,0 +1,22 @@
+.page {
+  max-width: 42rem;
+  margin: 0 auto;
+  padding: 2rem 1.25rem;
+  font-family: system-ui, sans-serif;
+  color: #1f2933;
+}
+
+.nav {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 2rem;
+}
+
+.button {
+  display: inline-block;
+  padding: 0.6rem 1.4rem;
+  border-radius: 0.4rem;
+  background: #14795c;
+  color: #fff;
+  text-decoration: none;
+}

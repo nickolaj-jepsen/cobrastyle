@@ -1,0 +1,6 @@
+{% load cobrastyle %}{% cobrastyle "tip.css" as styles %}
+<aside class="{{ styles.tip }}" data-cobrastyle-cloak>
+  <strong>Tip:</strong> this fragment arrived over HTMX. Its stylesheet wasn't linked by the
+  page — <code>{% templatetag openblock %} cobrastyle_fragment_links {% templatetag closeblock %}</code> added it out-of-band before the swap.
+</aside>
+{% cobrastyle_fragment_links %}

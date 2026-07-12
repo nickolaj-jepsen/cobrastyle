@@ -1,0 +1,16 @@
+{% cobrastyle layout = "base.css" %}
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>{% block title %}cobrastyle demo{% endblock %}</title>
+    {{ cobrastyle.links() }}
+  </head>
+  <body class="{{ layout.page }}">
+    <nav class="{{ layout.nav }}">
+      <a href="/">Home</a>
+      <a href="/about/">About</a>
+    </nav>
+    {% block content %}{% endblock %}
+  </body>
+</html>

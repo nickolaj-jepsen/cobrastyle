@@ -2,22 +2,366 @@
 _CSS modules for Python_
 
 > [!WARNING]
-> In active development! Still in exploratory phase, APIs **WILL** change.
+> In active development! APIs may still change before 1.0.
 
 ## Description
 
-Cobrastyle provides CSS modules support for Python and various Python based template engines and frameworks, with excellent performance provided by [LightningCSS](https://lightningcss.dev/).
+Cobrastyle provides CSS modules support for Python template engines and frameworks, with
+excellent performance provided by [LightningCSS](https://lightningcss.dev/).
 
-## Current packages:
+It has two modes:
 
-- [cobrastyle-jinja2](./packages/cobrastyle-jinja2): Jinja2 extension for Cobrastyle
+- **Dev mode** — stylesheets compile ad-hoc when a page renders, served from memory, fresh
+  on every refresh (edits to `@import`ed and composed-from files included). No build step,
+  no watcher. Output is readable and carries an inline source map, so devtools point at
+  the file you actually wrote.
+- **Prod mode** — `cobrastyle build` walks every template, compiles all stylesheets into a
+  content-hashed static directory plus a `manifest.json`. The production runtime reads only
+  the manifest: no compiler, no Rust wheel, near-zero overhead.
+
+## Packages
+
+- [cobrastyle](./packages/cobrastyle): CSS modules for Python. Extras: `[jinja2]`, `[flask]`,
+  `[fastapi]`, `[django]`, `[cli]`
 - [cobrastyle-lightningcss](./packages/cobrastyle-lightningcss): Python bindings for LightningCSS
-- [cobrastyle-core](./packages/cobrastyle-core): Core functionality for Cobrastyle
 
-## Missing features:
-- [ ] Production builds, where CSS is minified and bundled in a build step before deployment
-- [ ] Support for other template engines and frameworks
-  - [ ] Django
-  - [ ] Flask (via Jinja2)
-  - [ ] FastAPI (via Jinja2)
-- [ ] Support for inline CSS modules in templates
+## Examples
+
+Runnable example apps live in [examples/](./examples): [Flask](./examples/flask),
+[FastAPI](./examples/fastapi), and [Django](./examples/django) (Jinja2 and DTL side by
+side). Each runs in dev mode and has a one-command production build.
+
+## Usage
+
+### Jinja2
+
+```python
+from jinja2 import Environment, FileSystemLoader
+from cobrastyle import FileSystemResolver
+from cobrastyle.jinja2 import CobrastyleExtension, configure
+
+env = Environment(loader=FileSystemLoader("templates"), extensions=[CobrastyleExtension])
+configure(env, resolver=FileSystemResolver("styles"))          # dev
+# configure(env, manifest="dist/manifest.json")                # prod
+```
+
+```jinja
+<head>{{ cobrastyle.links() }}</head>
+{% cobrastyle styles = "button.css" %}
+<button class="{{ styles.button }}">Click me</button>
+```
+
+Class maps bake into the compiled template at load time; `cobrastyle.links()` renders
+`<link>` tags for every module the page (including inheriting children) imports, parent
+templates' modules first so page rules win the cascade. `composes: name from "./other.css"`
+works across files, and `@import` works between modules — both bundle the referenced
+file's rules into the importing module's CSS.
+
+### Flask
+
+```python
+from cobrastyle.flask import Cobrastyle
+
+app = Flask(__name__)
+Cobrastyle(app)                                   # dev: <root>/styles served at /cobrastyle/
+# Cobrastyle(app, manifest="dist/manifest.json")  # prod
+```
+
+### FastAPI / Starlette
+
+```python
+from cobrastyle.fastapi import install
+
+templates = Jinja2Templates(directory="templates")
+install(templates, app, root="styles")                     # dev: mounts a CSS server at /cobrastyle/
+# install(templates, app, manifest="dist/manifest.json")   # prod
+```
+
+### Django
+
+```python
+# settings.py
+TEMPLATES = [{
+    "BACKEND": "django.template.backends.jinja2.Jinja2",
+    "DIRS": [BASE_DIR / "templates"],
+    "OPTIONS": {"environment": "cobrastyle.django.environment"},
+}]
+INSTALLED_APPS = [..., "cobrastyle.django"]
+COBRASTYLE = {"ROOT": BASE_DIR / "styles"}   # dev/prod follows DEBUG; override with "DEV"
+
+# urls.py (dev serving, DEBUG only)
+path("cobrastyle/", include("cobrastyle.django.urls")),
+```
+
+For markup cobrastyle does not write itself, `cobrastyle.stylesheet_url("print.css")`
+returns a module's URL (`{% cobrastyle_url "print.css" %}` in DTL). A module named only
+there is not linked by `links()`, which links what the render's templates import.
+
+Django Template Language works too — same modules, same build:
+
+```django
+{% load cobrastyle %}
+{% cobrastyle "button.css" as styles %}
+<head>{% cobrastyle_links %}</head>
+<button class="{{ styles.button }}"></button>
+<link rel="preload" as="style" href="{% cobrastyle_url "print.css" %}">
+```
+
+In a template that `{% extends %}` another, put `{% cobrastyle ... as ... %}` inside the
+block that uses it: Django renders nothing else of such a template, so a binding outside
+every block would silently come out empty. Cobrastyle rejects that at parse time. To pull
+a stylesheet into the page without naming its classes there, drop the `as` clause:
+`{% cobrastyle "print.css" %}`.
+
+Deploying is two steps: build, then collect. The finder hands the build output to
+`collectstatic` — except `manifest.json`, which the app reads from the output directory
+at startup, so ship that directory with the app even when static files live elsewhere:
+
+```python
+STATICFILES_FINDERS = [
+    "django.contrib.staticfiles.finders.FileSystemFinder",
+    "django.contrib.staticfiles.finders.AppDirectoriesFinder",
+    "cobrastyle.django.finders.CobrastyleFinder",
+]
+```
+
+```sh
+manage.py cobrastyle_build   # covers Jinja2 and DTL templates in one pass
+manage.py collectstatic
+```
+
+In prod, `<link>` URLs resolve through Django's `static()` and `url()` references inside
+built CSS are relative — hashed storages (`ManifestStaticFilesStorage`, WhiteNoise's
+compressed variant) and CDN `STATIC_URL`s apply with no further config. To keep the URLs
+baked at build time instead, set `COBRASTYLE["BUILD_URL_PREFIX"]` (or
+`"STATIC_PREFIX": None` to disable the staticfiles integration entirely).
+
+With [WhiteNoise](https://whitenoise.readthedocs.io/) on **plain** static storage, add
+far-future caching for cobrastyle's content-hashed files:
+
+```python
+from cobrastyle.django import immutable_file_test
+WHITENOISE_IMMUTABLE_FILE_TEST = immutable_file_test
+```
+
+(Hashed storages need no help — WhiteNoise already recognizes their names.)
+
+### Global stylesheets
+
+Not everything wants scoping: a reset, vendor CSS, a design-system sheet whose class names
+*are* the API. Stylesheets matching `global_patterns` (default `*.global.css`) compile
+unscoped — their selectors keep the names they were written with, and they export nothing:
+
+```css
+/* reset.global.css */
+.visually-hidden { position: absolute; clip-path: inset(50%); }
+```
+
+```jinja
+{% cobrastyle "reset.global.css" %}   {# link it; there is no class map to bind #}
+<h1 class="visually-hidden">cobrastyle demo</h1>
+```
+
+They work as `@import` targets too: `@import "./reset.global.css";` inlines the global
+unscoped into the importing module, which stays scoped itself. Inside a global file,
+`:local(.name)` opts a single selector back into scoping.
+
+Set `global_patterns=["vendor/**"]` to mark files you cannot rename (in Django,
+`COBRASTYLE["GLOBAL_PATTERNS"]`); `[]` makes every stylesheet a module.
+
+### Fragments (HTMX)
+
+A template rendered as a fragment (an HTMX partial swap) never renders `<head>`, so a
+stylesheet only the fragment uses would arrive unlinked. Call `fragment_links()` in the
+fragment instead of `links()`, **after** the fragment's own markup:
+
+```jinja
+{% cobrastyle styles = "tip.css" %}
+<aside class="{{ styles.tip }}" data-cobrastyle-cloak>...</aside>
+{{ cobrastyle.fragment_links() }}
+```
+
+```django
+{% load cobrastyle %}
+{% cobrastyle "tip.css" as styles %}
+<aside class="{{ styles.tip }}" data-cobrastyle-cloak>...</aside>
+{% cobrastyle_fragment_links %}
+```
+
+This emits a small out-of-band script (`hx-swap-oob="beforeend:head"`) that appends the fragment's
+stylesheet links to the page's `<head>`, skips any the page already has, and removes
+itself. HTMX processes out-of-band elements before the main swap, so the CSS starts
+loading before the fragment markup lands, and repeated swaps never duplicate links.
+Dev and prod behave the same; URLs come from the compiler or the manifest as usual.
+
+The order matters. HTMX parses a partial inside a `<template>`, where the first start tag
+fixes the parser's insertion mode: the script's carrier `<div>` in front of a `<tr>` puts
+the parser in "in body" mode, and the row is then a parse error the parser silently drops.
+Calling last costs nothing — HTMX collects out-of-band elements wherever they sit.
+(A table-root fragment needs HTMX 2 either way; on 1.x the carrier is foster-parented out
+of the response and the stylesheet never loads. A `<col>` or `<colgroup>` root can't carry
+the call at all, so link that stylesheet from the page.)
+
+Inserted links still take a network round trip to load, so a fragment can paint
+unstyled for a moment. The `data-cobrastyle-cloak` attribute on the fragment root (as
+above) closes that gap: such elements stay hidden until every fragment stylesheet in
+flight has loaded, then reveal fully styled — immediately when the CSS was already
+present, and after at most 3 seconds if a stylesheet never loads. A cloaked element that
+arrives with no fragment loading (a fragment that links no stylesheet, an HTMX history
+restore) is inert, not hidden, so a lone `data-cobrastyle-cloak` never strands content;
+it just buys nothing.
+
+Two caveats. The markup relies on HTMX's `hx-swap-oob` handling, so a swap done with
+plain `fetch()` + `innerHTML` will not execute it (nor will HTMX with
+`htmx.config.allowScriptTags = false`, which strips the script from the response — the
+fragment then arrives unstyled). And the script is inline: under a strict CSP, either set
+`htmx.config.inlineScriptNonce`, which HTMX stamps onto every inline script it re-creates
+including this one, or pass a nonce per call — `{{ cobrastyle.fragment_links(nonce=nonce) }}`
+in Jinja, `{% cobrastyle_fragment_links nonce=request.csp_nonce %}` in DTL. The nonce
+carries over to the cloak `<style>` the script creates, so allow it in `style-src` too;
+without that the cloak silently no-ops (you get the flash it exists to prevent, nothing
+more). Note that adding a nonce to `style-src` makes CSP3 ignore an `'unsafe-inline'`
+you may be relying on elsewhere.
+
+### Boosted navigation, and whole pages swapped in as partials
+
+`hx-boost`, `hx-select`, and the one-endpoint-two-shapes handler all feed a *page* to
+HTMX, which strips the response's `<head>` before it swaps anything. The page's own
+`<link>`s go with it, so you land on a page styled only by whatever the previous one
+happened to link. The fix is the same out-of-band script, called once at the end of the
+layout's `<body>`:
+
+```jinja
+<head>{{ cobrastyle.links() }}</head>
+<body>
+  {% block content %}{% endblock %}
+  {{ cobrastyle.fragment_links() }}
+</body>
+```
+
+On an ordinary load it finds every link already in `<head>`, adds nothing, and removes
+itself. Arriving over HTMX, it adds what the live page is missing. Keep it a direct child
+of `<body>`, since `htmx.config.allowNestedOobSwaps` may be off. (HTMX's `head-support`
+extension solves the same problem more thoroughly, at the cost of another runtime
+dependency; this needs none.) The examples do it this way, with `hx-boost` on the nav.
+
+One limitation worth knowing: links added this way stay in `<head>` for the life of the
+document — nothing removes the ones the page you navigated away from brought. Scoped class
+names hash the file path, so they can't collide, but the unscoped rules in a `*.global.css`
+that a previous page linked do remain in effect.
+
+### CSS hot reload (dev)
+
+In dev mode the framework adapters turn on hot reload whenever they are also serving
+the CSS (which is the default). `links()` then emits a client script that subscribes to
+a server-sent-events endpoint on the dev CSS server and swaps changed `<link>`s in
+place: edit a stylesheet — or a file it `@import`s or composes from — and the browser
+picks it up within about a second, without a reload, page state intact.
+
+Opt out with `Cobrastyle(app, hot_reload=False)`, `install(..., hot_reload=False)`, or
+`COBRASTYLE = {"HOT_RELOAD": False}`. On a bare environment it's off by default;
+`configure(env, resolver=..., hot_reload=True)` enables it, provided the dev CSS server
+(the WSGI middleware or ASGI app from `cobrastyle.serve`) is mounted at the resolver's
+URL prefix, since that's where the events endpoint lives.
+
+Change detection polls the compiled modules' source files a few times a second, per
+connection; nothing of this exists in manifest mode. Under WSGI the event stream
+occupies a worker thread per open tab. Werkzeug's and Django's dev servers are threaded,
+so in practice this only matters on a deliberately single-threaded setup.
+
+### Building (non-Django)
+
+```sh
+cobrastyle build myapp:create_environment
+```
+
+The target is adapted by type: a `jinja2.Environment`, a Flask app, a `Jinja2Templates`
+instance, or a zero-arg factory returning any of these. The output directory — by
+default `static/cobrastyle/`, serving under `/static/cobrastyle/`; override with
+`--out` and `--url-prefix` — contains content-hashed CSS (plus any `url()` assets,
+rewritten) and `manifest.json`, the sole input the prod runtime needs. Builds are
+deterministic: unchanged input produces byte-identical output.
+
+### Checking
+
+Because class maps resolve at template compile time, cobrastyle can verify that your
+templates and your CSS agree — the guarantee JS bundlers give, as a CI gate:
+
+```sh
+cobrastyle check myapp:create_environment          # same target adaptation as `build`
+python manage.py cobrastyle_check                  # Django: covers Jinja2 and DTL templates
+```
+
+`check` walks every template, resolving class maps the way the target is configured:
+a dev-configured environment compiles straight from source (no built manifest needed —
+point CI at a dev-configured factory), while a manifest-configured one validates against
+its built manifest. `manage.py cobrastyle_check` always compiles from source, like
+`cobrastyle_build`. It reports two things:
+
+- **Errors** — references to classes a module doesn't export, with template and line
+  number: `index.html:12: styles.buttom — no class 'buttom' in 'page.css' (did you mean
+  'button'?)`. These fail the command.
+- **Warnings** — exported classes no template references (likely dead CSS). Warnings
+  don't fail the command unless you pass `--strict-unused`.
+
+Errors are only raised for accesses that are provably against a class map: a name bound
+by `{% cobrastyle %}` in the same template and not shadowed. Anything unverifiable —
+`{% set copy = styles %}`, a dynamic subscript `styles[name]`, passing the map into a
+macro or include, a rebound or shadowed name — is never flagged, and marks that module's
+exports as potentially used so the unused report stays free of false positives too.
+Classes referenced only from a child template's block (via `extends`) count as used but
+aren't validated. DTL analysis is best-effort in the same spirit: it understands
+`{% for %}`/`{% with %}` rebinding and the common `... as var` tags, and errs toward
+silence when resolution is dynamic.
+
+`--strict` mirrors the build flag: fail on any template compile error, cobrastyle or not.
+
+### Known limitations
+
+- `links()` covers the templates a render names outright: the `{% extends %}` chain and
+  the partials it `{% include %}`s (`{% import %}`s, in Jinja2). A template pulled in
+  through a variable — `{% include partial %}` — cannot be found statically, so its
+  stylesheets need naming by hand: `{% cobrastyle_links "shared/nav.css" %}` in DTL, or an
+  import of the module in the page template.
+- In a global stylesheet, only *selectors* escape scoping. `@keyframes` names, `animation`,
+  grid and container names and custom idents are still hashed — consistently within the
+  file, so a global that references its own keyframes works, but a module cannot name a
+  global's keyframe.
+
+## Development
+
+The dev environment is managed with [Nix](https://nixos.org/): `nix develop` provides the
+Rust toolchain, Python, [uv](https://docs.astral.sh/uv/), just, and watchexec, syncs the
+virtualenv, and installs the git hooks. Without Nix, install uv and
+[just](https://github.com/casey/just) yourself; rustup picks the toolchain from
+`rust-toolchain.toml`.
+
+Common tasks are wrapped in a [justfile](./justfile):
+
+```sh
+just sync       # set up the virtualenv (builds the Rust extension)
+just test       # run the test suite
+just watch      # re-run tests on file changes
+just lint       # ruff + rustfmt + clippy
+just typecheck  # pyrefly
+just fmt        # auto-format everything
+just check      # everything CI runs
+just example flask dev   # run an example app (flask|fastapi|django, dev|prod)
+```
+
+Editing Rust sources is covered by `just sync`/`just test` — uv rebuilds the extension
+whenever they change.
+
+### Releasing
+
+Both Python packages and the Rust crate share one version, kept in lockstep by
+`just bump`. To release:
+
+```sh
+just bump X.Y.Z          # sets the version everywhere
+git commit -am "release: X.Y.Z"
+git tag vX.Y.Z && git push --follow-tags
+```
+
+Pushing the tag runs the release workflow, which verifies the tag matches the
+package version, builds wheels and sdists, and publishes to PyPI.

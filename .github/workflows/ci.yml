@@ -1,0 +1,113 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      # rustup picks up rust-toolchain.toml automatically
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/cobrastyle-lightningcss
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+      - run: just lint
+      - run: just typecheck
+
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest]
+        python-version: ["3.12", "3.13", "3.14"]
+        # One leg per extra OS: platform breakage (paths, mtimes, file locking)
+        # is Python-version-independent, and 3.12 is both the floor and the
+        # abi3 wheel target.
+        include:
+          - os: windows-latest
+            python-version: "3.12"
+          - os: macos-latest
+            python-version: "3.12"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          python-version: ${{ matrix.python-version }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/cobrastyle-lightningcss
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+      - run: just test
+
+  wheels:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64
+            manylinux: auto
+          - os: ubuntu-latest
+            target: aarch64
+            manylinux: auto
+          - os: ubuntu-latest
+            target: x86_64
+            manylinux: musllinux_1_2
+          - os: ubuntu-latest
+            target: aarch64
+            manylinux: musllinux_1_2
+          - os: macos-latest
+            target: aarch64
+            manylinux: auto
+          # macos-latest runners are arm64; maturin cross-compiles the Intel wheel
+          - os: macos-latest
+            target: x86_64
+            manylinux: auto
+          - os: windows-latest
+            target: x64
+            manylinux: auto
+    steps:
+      - uses: actions/checkout@v4
+      - uses: PyO3/maturin-action@v1
+        with:
+          working-directory: packages/cobrastyle-lightningcss
+          target: ${{ matrix.target }}
+          args: --release --out dist
+          manylinux: ${{ matrix.manylinux }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.os }}-${{ matrix.target }}-${{ matrix.manylinux }}
+          path: packages/cobrastyle-lightningcss/dist
+
+  sdist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: PyO3/maturin-action@v1
+        with:
+          working-directory: packages/cobrastyle-lightningcss
+          command: sdist
+          args: --out dist
+      - uses: astral-sh/setup-uv@v6
+      - run: uv build --package cobrastyle --out-dir dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: |
+            packages/cobrastyle-lightningcss/dist
+            dist

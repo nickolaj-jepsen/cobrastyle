@@ -2,38 +2,40 @@
   description = "A development environment for cobrastyle";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
     rust-overlay = {
       url = "github:oxalica/rust-overlay";
-      inputs = {
-        nixpkgs.follows = "nixpkgs";
-      };
+      inputs.nixpkgs.follows = "nixpkgs";
     };
   };
 
   outputs = { self, nixpkgs, flake-utils, rust-overlay }:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        overlays = [ (import rust-overlay) ];
         pkgs = import nixpkgs {
-          inherit system overlays;
+          inherit system;
+          overlays = [ (import rust-overlay) ];
         };
-        #rust = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
-        rust = pkgs.rust-bin.stable.latest.default;
+        rust = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
       in
       {
-        devShell = pkgs.mkShell {
-          buildInputs = [
+        devShells.default = pkgs.mkShell {
+          packages = [
             rust
             pkgs.python312
             pkgs.uv
-            pkgs.git
+            pkgs.just
+            pkgs.prek
+            pkgs.watchexec
           ];
-          RUST_SRC_PATH = "${pkgs.rust.packages.stable.rustPlatform.rustLibSrc}";
+          RUST_SRC_PATH = "${rust}/lib/rustlib/src/rust/library";
+          # Local rebuilds of the extension use the dev profile (fast compile);
+          # CI and published wheels build release.
+          MATURIN_PEP517_ARGS = "--profile dev";
           shellHook = ''
-            # Sync uv venv
-            uv venv -p ${pkgs.python312}/bin/python3 -q
+            uv sync -q --all-packages
+            prek install > /dev/null
           '';
         };
       });

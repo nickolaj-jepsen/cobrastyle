@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}About · cobrastyle demo{% endblock %}
+{% block content %}
+  {% cobrastyle styles = "about.css" %}
+  <article class="{{ styles.prose }}">
+    <h1>How it works</h1>
+    <p>
+      In development every stylesheet compiles on demand and is served by the app —
+      <span class="{{ styles.highlight }}">edits show up on refresh</span>.
+    </p>
+    <p>
+      In production <code>cobrastyle build</code> writes hashed CSS files plus a manifest,
+      and the app serves prebuilt static files without ever importing the compiler.
+    </p>
+  </article>
+{% endblock %}

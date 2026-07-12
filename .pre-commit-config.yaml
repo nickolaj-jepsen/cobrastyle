@@ -1,0 +1,26 @@
+# Runs with prek (or pre-commit): `prek install`
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff check
+        entry: uv run ruff check --fix
+        language: system
+        types: [python]
+      - id: ruff-format
+        name: ruff format
+        entry: uv run ruff format
+        language: system
+        types: [python]
+      - id: cargo-fmt
+        name: cargo fmt
+        entry: cargo fmt --manifest-path packages/cobrastyle-lightningcss/Cargo.toml --
+        language: system
+        types: [rust]
+        pass_filenames: false
+      - id: versions-check
+        name: versions in lockstep
+        entry: python3 scripts/versions.py check
+        language: system
+        files: ^packages/.*/(pyproject\.toml|Cargo\.toml|Cargo\.lock)$
+        pass_filenames: false

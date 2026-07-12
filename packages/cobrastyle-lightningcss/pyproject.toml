@@ -3,20 +3,42 @@ name = "cobrastyle-lightningcss"
 version = "0.0.0.dev1"
 description = "Python bindings for lightningcss"
 readme = "README.md"
-requires-python = ">=3.10"
+license = "GPL-3.0-only"
+license-files = ["LICENSE"]
+requires-python = ">=3.12"
+authors = [{ name = "Nickolaj Jepsen", email = "nickolaj@fireproof.website" }]
+keywords = ["css", "lightningcss", "css-modules", "bundler", "minifier"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Rust",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
 dependencies = []
 
+[project.urls]
+Repository = "https://github.com/nickolaj-jepsen/cobrastyle"
+Issues = "https://github.com/nickolaj-jepsen/cobrastyle/issues"
+
 [build-system]
-requires = ["maturin>=1.0,<2.0"]
+requires = ["maturin>=1.14,<2.0"]
 build-backend = "maturin"
 
 [tool.maturin]
 features = ["pyo3/extension-module"]
 
+# Rebuild on `uv sync` when the Rust sources change, not just pyproject.toml.
 [tool.uv]
-dev-dependencies = [
-    "maturin>=1.7.1",
-    "pip>=24.2",
-    "pytest>=8.3.2",
-    "syrupy>=4.7.1",
+cache-keys = [
+    { file = "pyproject.toml" },
+    { file = "Cargo.toml" },
+    { file = "Cargo.lock" },
+    { file = "build.rs" },
+    { file = "src/**/*.rs" },
+    { file = "cobrastyle_lightningcss.pyi" },
+    { env = "MATURIN_PEP517_ARGS" },
 ]

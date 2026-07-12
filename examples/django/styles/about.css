@@ -1,0 +1,14 @@
+@import "theme.css";
+
+.prose {
+  line-height: 1.7;
+}
+
+.highlight {
+  padding: 0 0.3rem;
+  background: #fef3c7;
+}
+
+.emphasis {
+  font-weight: 700;
+}
