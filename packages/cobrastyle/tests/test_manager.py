@@ -376,3 +376,82 @@ def test_dev_pattern_sanitizes_whitespace_in_the_file_stem():
 
     # class attributes are whitespace-delimited; a raw stem would split the name in two
     assert classes["title"].startswith("button_primary_title_")
+
+
+def test_global_import_is_not_scoped():
+    manager = CobrastyleManager(
+        InMemoryResolver(
+            {
+                "card.css": '@import "./reset.global.css"; .card { color: red; }',
+                "reset.global.css": ".container { margin: 0; }",
+            }
+        ),
+        module_pattern="[local]",
+        minify=True,
+    )
+
+    stylesheet = manager.import_module("card.css")
+
+    assert ".container{" in stylesheet.code
+    assert stylesheet.classes == {"card": "card"}  # the global exports nothing
+
+
+def test_global_entry_compiles_unscoped_with_no_classes():
+    manager = CobrastyleManager(InMemoryResolver({"reset.global.css": ".container { margin: 0; }"}), minify=True)
+
+    stylesheet = manager.import_module("reset.global.css")
+
+    assert stylesheet.code == ".container{margin:0}"
+    assert stylesheet.classes == {}
+
+
+def test_global_patterns_are_configurable():
+    files = {"vendor/normalize.css": ".container { margin: 0; }"}
+    scoped = CobrastyleManager(InMemoryResolver(files), minify=True)
+    unscoped = CobrastyleManager(InMemoryResolver(files), minify=True, global_patterns=["vendor/*.css"])
+
+    assert scoped.import_module("vendor/normalize.css").classes  # the default leaves it a module
+    assert unscoped.import_module("vendor/normalize.css").classes == {}
+
+
+def test_global_patterns_empty_makes_every_stylesheet_a_module():
+    manager = CobrastyleManager(
+        InMemoryResolver({"reset.global.css": ".container { margin: 0; }"}),
+        module_pattern="[local]",
+        minify=True,
+        global_patterns=[],
+    )
+
+    assert manager.import_module("reset.global.css").classes == {"container": "container"}
+
+
+def test_composes_from_a_global_stylesheet_raises(monkeypatch):
+    manager = use_fake_bundle(
+        monkeypatch,
+        {
+            "button.css": (".button {}", {"button": [composes_from("base", "./base.global.css")]}),
+            "base.global.css": (".base {}", {}),
+        },
+    )
+
+    with pytest.raises(ComposesExportError, match="is a global stylesheet"):
+        manager.import_module("button.css")
+
+
+def test_global_import_edit_recompiles(tmp_path):
+    (tmp_path / "card.css").write_text('@import "reset.global.css"; .card { color: red; }')
+    reset = tmp_path / "reset.global.css"
+    reset.write_text(".container { margin: 0; }")
+    for file in tmp_path.iterdir():
+        os.utime(file, (1000, 1000))
+    manager = CobrastyleManager(FileSystemResolver(tmp_path), minify=True)
+
+    first = manager.import_module("card.css")
+    assert manager.import_module("card.css") is first
+
+    reset.write_text(".container { margin: auto; }")
+    os.utime(reset, (2000, 2000))
+    second = manager.import_module("card.css")
+
+    assert second is not first
+    assert "margin:auto" in second.code

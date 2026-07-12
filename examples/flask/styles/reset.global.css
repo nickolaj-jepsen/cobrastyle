@@ -1,0 +1,21 @@
+/* A `.global.css` file compiles unscoped: these names reach the browser exactly as written,
+   so markup (and third-party CSS) can rely on them. Regular modules still scope. */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

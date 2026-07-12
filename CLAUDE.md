@@ -63,6 +63,17 @@ Other invariants worth knowing before touching related code:
   sorted, exports sorted before hashing). Tests assert this.
 - **Class names hash the file path, not its content** — a recompile keeps existing baked class maps valid.
 - **lightningcss is exact-pinned** in Cargo.toml because class hashes are not stable across its versions.
+- **Global stylesheets are a print-time trick.** Files matching `global_patterns` (default
+  `*.global.css`) compile unscoped, even when inlined into a scoped module — but lightningcss's
+  bundler takes one `ParserOptions` for the whole import graph, so per-file config is not
+  expressible. What *is* per-file is scoping itself: the printer rewrites idents by the
+  `source_index` of the rule they came from, and `:global()` tells it to skip one. So `bundle()`
+  walks the bundled rule tree and wraps every selector from a global source in `:global()`
+  (`globalize_rules` in `lib.rs`), which also keeps those names out of the exports map for free.
+  This is *selector*-level: `@keyframes`/`animation`/grid/container/custom idents in a global file
+  are still hashed (`css_modules::Config` defaults them to true), consistently within the file. The
+  fix, if that ever bites, is a lightningcss patch adding per-file `ParserOptions` — legal as a git
+  dep because this crate ships as a wheel, not to crates.io.
 
 The Django integration (`cobrastyle/django/`) supports both the Jinja2 backend (an `environment()`
 factory configured from the `COBRASTYLE` settings dict, dev/prod following `DEBUG`) and native DTL

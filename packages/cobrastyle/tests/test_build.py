@@ -223,6 +223,9 @@ def test_external_url_classification_matches_the_bundler(specifier, external):
         def resolve(self, s: str, f: str) -> str:
             return "resolved.css"
 
+        def is_global(self, path: str) -> bool:
+            return False
+
     bundle(filename="entry.css", provider=Provider())
     bundler_external = "resolved.css" not in reads
     assert bundler_external is external
@@ -376,3 +379,22 @@ def test_build_rejects_manifest_configured_environment(tmp_path):
     # Nothing compiles in manifest mode; silently emitting a module-less manifest would break prod
     with pytest.raises(BuildError, match="manifest"):
         build(environment, output_dir=tmp_path / "out")
+
+
+def test_build_carries_a_global_stylesheet(project, tmp_path):
+    (project / "styles" / "styles" / "reset.global.css").write_text(".container { margin: 0 auto; }")
+    (project / "templates" / "index.html").write_text(
+        '{% extends "base.html" %}{% cobrastyle "styles/reset.global.css" %}'
+        '{% block content %}{% cobrastyle styles = "styles/page.css" %}'
+        '<h1 class="{{ styles.title }}">Hi</h1>{% endblock %}'
+    )
+    environment = make_environment(project)
+    out = project / "out"
+
+    manifest = build(environment, output_dir=out, url_prefix="/static/cobrastyle/")
+
+    entry = manifest.modules["styles/reset.global.css"]
+    assert entry.classes == {}  # a global exports nothing, but is still built and linked
+    assert manifest.pages["index.html"] == ["styles/reset.global.css", "styles/page.css"]
+    built = (out / entry.file).read_text()
+    assert built == ".container{margin:0 auto}"  # unscoped, in the built output

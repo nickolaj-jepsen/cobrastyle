@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Mutex;
 
@@ -6,6 +6,8 @@ use lightningcss::bundler::{BundleErrorKind, Bundler, ResolveResult, SourceProvi
 use lightningcss::css_modules::{self, Pattern};
 use lightningcss::dependencies::{self, DependencyOptions};
 use lightningcss::printer::PrinterOptions;
+use lightningcss::rules::{CssRule, CssRuleList};
+use lightningcss::selector::{Component, PseudoClass, Selector, SelectorList};
 use lightningcss::stylesheet::{MinifyOptions, ParserOptions, StyleSheet, ToCssResult};
 use lightningcss::targets::{Browsers, Targets};
 use parcel_sourcemap::SourceMap;
@@ -425,6 +427,96 @@ impl Drop for PySourceProvider {
     }
 }
 
+/// The source indices of the bundled files the provider calls global.
+///
+/// `sources` is indexed by the `source_index` every rule's `loc` carries, which is
+/// what the printer scopes idents by — so this set is all the rule walk needs.
+fn global_sources(provider: &Py<PyAny>, sources: &[String]) -> PyResult<HashSet<u32>> {
+    Python::attach(|py| {
+        let provider = provider.bind(py);
+        let mut globals = HashSet::new();
+        for (index, source) in (0u32..).zip(sources) {
+            if provider
+                .call_method1("is_global", (source.as_str(),))?
+                .extract::<bool>()?
+            {
+                globals.insert(index);
+            }
+        }
+        Ok(globals)
+    })
+}
+
+/// Wrap every selector coming from a global source file in the CSS modules `:global()`
+/// pseudo-class, so its class names print verbatim and stay out of the module's exports.
+///
+/// Scoping is a print-time decision keyed on each rule's `source_index`, and `:global()`
+/// is how the printer is already told to skip it (it takes its `css_module` out for the
+/// wrapped selector, which is also what keeps the names unexported). Reaching that from
+/// the AST is what lets one bundle mix scoped and unscoped files, which the bundler's
+/// single `ParserOptions` cannot express.
+///
+/// Selector-level only: `@keyframes` names, `animation`, grid/container names and custom
+/// idents inside a global file still hash. They hash consistently within the file, so CSS
+/// that only references its own names still works; a *module* naming a global's keyframe
+/// does not.
+fn globalize_rules(rules: &mut CssRuleList<'_>, globals: &HashSet<u32>) {
+    for rule in &mut rules.0 {
+        match rule {
+            CssRule::Style(style) => {
+                if globals.contains(&style.loc.source_index) {
+                    globalize_selectors(&mut style.selectors);
+                }
+                globalize_rules(&mut style.rules, globals);
+            }
+            CssRule::Nesting(nesting) => {
+                if globals.contains(&nesting.style.loc.source_index) {
+                    globalize_selectors(&mut nesting.style.selectors);
+                }
+                globalize_rules(&mut nesting.style.rules, globals);
+            }
+            CssRule::Scope(scope) => {
+                if globals.contains(&scope.loc.source_index) {
+                    for selectors in [&mut scope.scope_start, &mut scope.scope_end]
+                        .into_iter()
+                        .flatten()
+                    {
+                        globalize_selectors(selectors);
+                    }
+                }
+                globalize_rules(&mut scope.rules, globals);
+            }
+            CssRule::Media(media) => globalize_rules(&mut media.rules, globals),
+            CssRule::Supports(supports) => globalize_rules(&mut supports.rules, globals),
+            CssRule::LayerBlock(layer) => globalize_rules(&mut layer.rules, globals),
+            CssRule::Container(container) => globalize_rules(&mut container.rules, globals),
+            CssRule::MozDocument(document) => globalize_rules(&mut document.rules, globals),
+            CssRule::StartingStyle(starting) => globalize_rules(&mut starting.rules, globals),
+            _ => {}
+        }
+    }
+}
+
+fn globalize_selectors(selectors: &mut SelectorList<'_>) {
+    for selector in &mut selectors.0 {
+        // An explicit `:local()`/`:global()` is the author overriding the file's default —
+        // wrapping it would silently swallow `:local()`, the only way back into scoping
+        if selector.iter_raw_match_order().any(is_module_pseudo_class) {
+            continue;
+        }
+        *selector = Selector::from(Component::NonTSPseudoClass(PseudoClass::Global {
+            selector: Box::new(selector.clone()),
+        }));
+    }
+}
+
+fn is_module_pseudo_class(component: &Component<'_>) -> bool {
+    matches!(
+        component,
+        Component::NonTSPseudoClass(PseudoClass::Local { .. } | PseudoClass::Global { .. })
+    )
+}
+
 /// Parse, minify and print a stylesheet, optionally as a CSS module.
 ///
 /// # Errors
@@ -495,8 +587,12 @@ pub fn transform(
 }
 
 /// Bundle a stylesheet and its `@import`s into one, reading every file
-/// through `provider` (an object with ``read(path) -> str`` and
-/// ``resolve(specifier, from_path) -> str`` methods).
+/// through `provider` (an object with ``read(path) -> str``,
+/// ``resolve(specifier, from_path) -> str`` and ``is_global(path) -> bool``
+/// methods).
+///
+/// Files the provider calls global are emitted unscoped, even when the bundle
+/// compiles as a module: their selectors print verbatim and are not exported.
 ///
 /// # Errors
 ///
@@ -569,6 +665,12 @@ pub fn bundle(
                     ),
                 })?
         };
+
+        // Before minify(), which merges and reorders rules; the wrapper travels with the selector
+        let globals = global_sources(&provider.provider, &stylesheet.sources)?;
+        if !globals.is_empty() {
+            globalize_rules(&mut stylesheet.rules, &globals);
+        }
 
         let result = minify_and_print(
             &mut stylesheet,

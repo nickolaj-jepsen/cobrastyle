@@ -16,7 +16,7 @@ from cobrastyle.paths import url_prefix as normalize_url_prefix
 from cobrastyle.resolvers import FileSystemResolver
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
 
 class CobrastyleSettings(TypedDict, total=False):
@@ -35,6 +35,7 @@ class CobrastyleSettings(TypedDict, total=False):
     MODULE_PATTERN: str | None
     TARGETS: list[str] | None
     SOURCE_MAP: bool
+    GLOBAL_PATTERNS: Sequence[str] | None
 
 
 def environment(**options: Any) -> Environment:
@@ -99,6 +100,8 @@ def common_options(config: CobrastyleSettings) -> ConfigureOptions:
         options["targets"] = config["TARGETS"]
     if "SOURCE_MAP" in config:
         options["source_map"] = config["SOURCE_MAP"]
+    if "GLOBAL_PATTERNS" in config:
+        options["global_patterns"] = config["GLOBAL_PATTERNS"]
     return options
 
 

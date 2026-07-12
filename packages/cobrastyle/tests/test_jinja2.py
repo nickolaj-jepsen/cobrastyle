@@ -667,3 +667,37 @@ def test_fragment_links_carries_the_cloak_machinery():
     assert 'removeAttribute("data-cobrastyle-cloak")' in result
     assert "link.onload=link.onerror=" in result
     assert "setTimeout(resolve,3000)" in result
+
+
+def test_targetless_tag_links_the_stylesheet_without_binding():
+    resources = {"reset.global.css": ".container { margin: 0; }"}
+    result = render_jinja(
+        """
+    {% cobrastyle "reset.global.css" %}
+    {{ cobrastyle.links() }}
+    """,
+        resources,
+    )
+
+    assert _hrefs(result) == ["reset.global.css"]
+
+
+def test_targetless_tag_in_a_layout_links_before_the_page():
+    templates = {
+        "base.html": '{% cobrastyle "reset.global.css" %}{{ cobrastyle.links() }}{% block body %}{% endblock %}',
+        "page.html": (
+            '{% extends "base.html" %}{% block body %}{% cobrastyle s = "page.css" %}{{ s.card }}{% endblock %}'
+        ),
+    }
+    resources = {"reset.global.css": ".container { margin: 0; }", "page.css": ".card { color: red; }"}
+    jinja = make_environment(resources, templates)
+
+    rendered = jinja.get_template("page.html").render()
+
+    assert _hrefs(rendered) == ["reset.global.css", "page.css"]
+    assert "card" in rendered
+
+
+def test_targetless_tag_still_rejects_a_dynamic_path():
+    with pytest.raises(TemplateSyntaxError, match="constant string path"):
+        render_jinja('{% cobrastyle "a.css" ~ "b.css" %}', {"a.css": ""})

@@ -20,7 +20,7 @@ from cobrastyle.resolvers import FileResolver, FileSystemResolver, HasUrlPrefix
 from cobrastyle.source import StyleSource
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable
+    from collections.abc import Callable, Iterable, Sequence
 
     from cobrastyle.manager import CobrastyleManager
 
@@ -44,6 +44,7 @@ class ConfigureOptions(TypedDict, total=False):
     targets: list[str] | None
     source_map: bool
     analyze_dependencies: bool
+    global_patterns: Sequence[str] | None
 
 
 class ExtendedEnvironment(Environment):
@@ -156,6 +157,7 @@ def configure(
     targets: list[str] | None = ...,
     source_map: bool = ...,
     analyze_dependencies: bool = ...,
+    global_patterns: Sequence[str] | None = ...,
 ) -> None: ...
 @overload
 def configure(
@@ -169,6 +171,7 @@ def configure(
     targets: list[str] | None = ...,
     source_map: bool = ...,
     analyze_dependencies: bool = ...,
+    global_patterns: Sequence[str] | None = ...,
 ) -> None: ...
 def configure(
     environment: Environment,
@@ -183,6 +186,7 @@ def configure(
     targets: list[str] | None = None,
     source_map: bool = True,
     analyze_dependencies: bool = False,
+    global_patterns: Sequence[str] | None = None,
 ) -> None:
     """Configure cobrastyle on an environment using :class:`CobrastyleExtension`.
 
@@ -207,6 +211,10 @@ def configure(
     regardless. ``module_pattern=None`` follows the same split: readable
     dev class names (``[name]_[local]_[hash]``), compact build names
     (``[hash]_[local]``). An explicit pattern applies to both.
+
+    ``global_patterns`` are the paths that compile unscoped, keeping the
+    class names their author wrote and exporting none (default
+    ``["*.global.css"]``; ``[]`` makes every stylesheet a module).
 
     Dev mode rejects a ``bytecode_cache`` — a cache hit would silently skip
     the page tracking behind ``links()``; prod mode is cache-safe.
@@ -250,6 +258,7 @@ def configure(
         targets=targets,
         source_map=source_map,
         analyze_dependencies=analyze_dependencies,
+        global_patterns=global_patterns,
     )
     # Drop the lazily-built manager and source (which carries the URL and markup
     # caches) so reconfiguration actually takes effect; templates already compiled
@@ -406,8 +415,12 @@ class CobrastyleExtension(Extension):
 
     def parse(self, parser: Parser) -> nodes.Node:
         lineno = next(parser.stream).lineno
-        target = parser.parse_assign_target()
-        parser.stream.expect("assign")
+        # `{% cobrastyle "reset.global.css" %}`: no class map worth binding (a global exports
+        # nothing), just link it. A target would be a name the template never reads.
+        target = None
+        if not parser.stream.current.test("string"):
+            target = parser.parse_assign_target()
+            parser.stream.expect("assign")
         path_expression = parser.parse_expression()
         if not isinstance(path_expression, nodes.Const) or not isinstance(path_expression.value, str):
             raise TemplateSyntaxError(
@@ -422,7 +435,7 @@ class CobrastyleExtension(Extension):
         except StylesheetPathError as exc:
             raise TemplateSyntaxError(str(exc), lineno, parser.name, parser.filename) from exc
         classes, page_paths = self._resolve_module(path, lineno, parser)
-        if self._binding_recorder is not None:
+        if self._binding_recorder is not None and target is not None:
             self._binding_recorder(target, path, classes)
 
         page_id = self._compiling.page_id
@@ -435,6 +448,9 @@ class CobrastyleExtension(Extension):
             if self._compiling.pending_tags == 0:
                 self._publish(page_id, page, self._compiling.page_refs)
 
+        if target is None:
+            # The tag's whole effect is the page tracking above; emit a statement that does nothing
+            return nodes.ExprStmt(nodes.Const(None)).set_lineno(lineno)
         return nodes.Assign(target, nodes.Const(classes)).set_lineno(lineno)
 
     def _resolve_module(self, path: str, lineno: int, parser: Parser) -> tuple[dict[str, str], tuple[str, ...]]:

@@ -50,8 +50,11 @@ def test_flask_example(copy_example, monkeypatch):
 
     client = module.create_app().test_client()
     html = client.get("/").get_data(as_text=True)
-    # base.css first: the composed module must lose the cascade to .cta
-    assert css_hrefs(html) == ["/cobrastyle/base.css", "/cobrastyle/index.css"]
+    # reset first, then base.css: the composed module must lose the cascade to .cta
+    assert css_hrefs(html) == ["/cobrastyle/reset.global.css", "/cobrastyle/base.css", "/cobrastyle/index.css"]
+    # A global stylesheet keeps the names it was written with, so the markup can use them literally
+    assert '<h1 class="visually-hidden">' in html
+    assert ".visually-hidden {" in client.get("/cobrastyle/reset.global.css").get_data(as_text=True)
     css = client.get("/cobrastyle/index.css")
     assert css.status_code == 200
     assert "dots.svg" in css.get_data(as_text=True)

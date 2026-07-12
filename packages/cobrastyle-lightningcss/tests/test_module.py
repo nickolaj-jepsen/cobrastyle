@@ -15,8 +15,9 @@ from cobrastyle_lightningcss import (
 
 
 class DictProvider:
-    def __init__(self, files: dict[str, str]):
+    def __init__(self, files: dict[str, str], globals: tuple[str, ...] = ()):
         self.files = files
+        self.globals = globals
         self.reads: list[str] = []
 
     def read(self, path: str) -> str:
@@ -25,6 +26,9 @@ class DictProvider:
 
     def resolve(self, specifier: str, from_path: str) -> str:
         return posixpath.normpath(posixpath.join(posixpath.dirname(from_path), specifier))
+
+    def is_global(self, path: str) -> bool:
+        return path in self.globals
 
 
 def _remove_whitespace(text: str) -> str:
@@ -452,3 +456,69 @@ def test_bundle_provider_resolve_exception_propagates_unchanged():
     with pytest.raises(ValueError, match=r"cannot resolve other\.css") as excinfo:
         bundle(filename="entry.css", provider=provider)
     assert type(excinfo.value) is ValueError  # the original, not a TransformError wrapper
+
+
+def test_bundle_global_source_is_not_scoped():
+    provider = DictProvider(
+        {
+            "entry.css": '@import "reset.global.css"; .entry { color: red; }',
+            "reset.global.css": ".container { margin: 0; } #header { padding: 0; }",
+        },
+        globals=("reset.global.css",),
+    )
+    result = bundle(filename="entry.css", provider=provider, module=True, minify=True)
+
+    assert ".container{" in result.code
+    assert "#header{" in result.code
+    assert ".entry{" not in result.code  # the module around it still scopes
+    assert result.exports is not None
+    assert set(result.exports) == {"entry"}
+
+
+def test_bundle_global_source_is_not_scoped_inside_at_rules_or_nesting():
+    provider = DictProvider(
+        {
+            "entry.css": '@import "reset.global.css"; .entry { color: red; }',
+            "reset.global.css": """
+                @media (min-width: 30rem) { .wide { display: flex; } }
+                @supports (display: grid) { .grid { display: grid; } }
+                @layer base { .layered { color: red; } }
+                .outer { .nested { color: blue; } }
+            """,
+        },
+        globals=("reset.global.css",),
+    )
+    result = bundle(filename="entry.css", provider=provider, module=True, minify=True)
+
+    for selector in (".wide{", ".grid{", ".layered{", ".outer{", ".nested{"):
+        assert selector in result.code, f"{selector} was scoped"
+
+
+def test_bundle_global_source_honours_explicit_local():
+    provider = DictProvider(
+        {"reset.global.css": ".container { margin: 0; } :local(.opt_in) { color: red; }"},
+        globals=("reset.global.css",),
+    )
+    result = bundle(filename="reset.global.css", provider=provider, module=True, minify=True)
+
+    assert ".container{" in result.code
+    assert ".opt_in{" not in result.code
+    assert result.exports is not None
+    assert set(result.exports) == {"opt_in"}  # the entry's, so it is exported
+
+
+def test_bundle_without_globals_scopes_every_source():
+    files = {
+        "entry.css": '@import "reset.global.css"; .entry { color: red; }',
+        "reset.global.css": ".container { margin: 0; }",
+    }
+    scoped = bundle(filename="entry.css", provider=DictProvider(files), module=True, minify=True)
+    globalized = bundle(
+        filename="entry.css",
+        provider=DictProvider(files, globals=("reset.global.css",)),
+        module=True,
+        minify=True,
+    )
+
+    assert ".container{" not in scoped.code
+    assert scoped.code != globalized.code

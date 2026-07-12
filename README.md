@@ -146,6 +146,29 @@ WHITENOISE_IMMUTABLE_FILE_TEST = immutable_file_test
 
 (Hashed storages need no help — WhiteNoise already recognizes their names.)
 
+### Global stylesheets
+
+Not everything wants scoping: a reset, vendor CSS, a design-system sheet whose class names
+*are* the API. Stylesheets matching `global_patterns` (default `*.global.css`) compile
+unscoped — their selectors keep the names they were written with, and they export nothing:
+
+```css
+/* reset.global.css */
+.visually-hidden { position: absolute; clip-path: inset(50%); }
+```
+
+```jinja
+{% cobrastyle "reset.global.css" %}   {# link it; there is no class map to bind #}
+<h1 class="visually-hidden">cobrastyle demo</h1>
+```
+
+They work as `@import` targets too: `@import "./reset.global.css";` inlines the global
+unscoped into the importing module, which stays scoped itself. Inside a global file,
+`:local(.name)` opts a single selector back into scoping.
+
+Set `global_patterns=["vendor/**"]` to mark files you cannot rename (in Django,
+`COBRASTYLE["GLOBAL_PATTERNS"]`); `[]` makes every stylesheet a module.
+
 ### Fragments (HTMX)
 
 A template rendered as a fragment (an HTMX partial swap) never renders `<head>`, so a
@@ -257,6 +280,10 @@ silence when resolution is dynamic.
   through a variable — `{% include partial %}` — cannot be found statically, so its
   stylesheets need naming by hand: `{% cobrastyle_links "shared/nav.css" %}` in DTL, or an
   import of the module in the page template.
+- In a global stylesheet, only *selectors* escape scoping. `@keyframes` names, `animation`,
+  grid and container names and custom idents are still hashed — consistently within the
+  file, so a global that references its own keyframes works, but a module cannot name a
+  global's keyframe.
 
 ## Development
 

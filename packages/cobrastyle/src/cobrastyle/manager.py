@@ -1,8 +1,10 @@
 import base64
+import fnmatch
 import hashlib
 import posixpath
 import re
 import threading
+from collections.abc import Callable, Sequence
 from typing import NamedTuple
 
 from cobrastyle.errors import (
@@ -18,6 +20,9 @@ from cobrastyle_lightningcss import CssModuleExport, CssModuleReference, Depende
 
 # `button_primary_2x4fBq` reads back to its source in devtools; builds swap in the compact lightningcss default
 DEV_MODULE_PATTERN = "[name]_[local]_[hash]"
+
+# Vendor CSS, resets and design-system sheets are global by convention, not by opt-in
+DEFAULT_GLOBAL_PATTERNS = ("*.global.css",)
 
 
 class Stylesheet(NamedTuple):
@@ -47,10 +52,17 @@ class _BundleProvider:
     concurrent reads.
     """
 
-    def __init__(self, resolver: FileResolver, entry: str, entry_content: str):
+    def __init__(
+        self,
+        resolver: FileResolver,
+        entry: str,
+        entry_content: str,
+        is_global: Callable[[str], bool] = lambda _path: False,
+    ):
         self.resolver = resolver
         self.entry = entry
         self.entry_content = entry_content
+        self.is_global = is_global
 
     def read(self, path: str) -> str:
         # The manager already resolved the entry (for its URL and mtime)
@@ -84,6 +96,16 @@ class CobrastyleManager:
     ``composes: name from "./other.css"`` imports the other module
     recursively; the referenced modules are recorded in
     :attr:`Stylesheet.composes` so pages can link them too.
+
+    Stylesheets whose path matches ``global_patterns`` (default
+    ``*.global.css``; pass ``[]`` to make every stylesheet a module) compile
+    *unscoped*: their selectors keep the names the author wrote and export
+    nothing, whether they are imported by a module or compiled as an entry.
+    ``:local()`` inside such a file opts a selector back into scoping.
+    Scoping is selective, not absent: ``@keyframes`` names, ``animation``,
+    grid/container names and custom idents in a global file are still hashed
+    (consistently within the file, so self-contained CSS works, but a module
+    cannot name a global's keyframe).
     """
 
     def __init__(
@@ -96,6 +118,7 @@ class CobrastyleManager:
         targets: list[str] | None = None,
         analyze_dependencies: bool = False,
         source_map: bool = True,
+        global_patterns: Sequence[str] | None = None,
     ):
         self.resolver = resolver
         self.minify = minify
@@ -104,6 +127,8 @@ class CobrastyleManager:
         self.targets = targets
         self.analyze_dependencies = analyze_dependencies
         self.source_map = source_map
+        self.global_patterns = tuple(DEFAULT_GLOBAL_PATTERNS if global_patterns is None else global_patterns)
+        self._global_cache: dict[str, bool] = {}
         self._cache: dict[str, Stylesheet] = {}
         self._lock = threading.RLock()
         # Compose-chain paths currently compiling, in call order (cycle detection).
@@ -133,6 +158,17 @@ class CobrastyleManager:
             self._cache[path] = stylesheet
             return stylesheet
 
+    def is_global(self, path: str) -> bool:
+        """Whether ``path`` compiles unscoped (see ``global_patterns``).
+
+        Memoized: the bundler asks once per file per compile, and dev recompiles on every edit.
+        """
+        cached = self._global_cache.get(path)
+        if cached is None:
+            cached = any(fnmatch.fnmatchcase(path, pattern) for pattern in self.global_patterns)
+            self._global_cache[path] = cached
+        return cached
+
     def _is_fresh(self, stylesheet: Stylesheet) -> bool:
         try:
             return all(self.resolver.mtime(path) == mtime for path, mtime in stylesheet.dep_mtimes)
@@ -143,8 +179,9 @@ class CobrastyleManager:
     def _module_pattern_for(self, path: str) -> str:
         if "[name]" not in self.module_pattern:
             return self.module_pattern
-        # [name] embeds the stem verbatim; whitespace in it would split the emitted class attribute in two
-        stem = re.sub(r"\s+", "_", posixpath.splitext(posixpath.basename(path))[0])
+        # [name] embeds the stem verbatim: whitespace would split the emitted class attribute in
+        # two, and a dot (`reset.global.css`) would need escaping in every selector matching it
+        stem = re.sub(r"[^\w-]+", "_", posixpath.splitext(posixpath.basename(path))[0])
         return self.module_pattern.replace("[name]", stem)
 
     def _compile(self, path: str) -> Stylesheet:
@@ -158,7 +195,7 @@ class CobrastyleManager:
             raise StylesheetDecodeError(f"Stylesheet {path!r} is not valid UTF-8: {exc}") from exc
         result = bundle(
             filename=path,
-            provider=_BundleProvider(self.resolver, path, resolved.content),
+            provider=_BundleProvider(self.resolver, path, resolved.content, self.is_global),
             module=True,
             module_pattern=self._module_pattern_for(path),
             minify=self.minify,
@@ -215,6 +252,11 @@ class CobrastyleManager:
                     names.append(name)
                 case CssModuleReference.Dependency(name=name, specifier=specifier):
                     dependency_path = normalize_path(posixpath.join(posixpath.dirname(path), specifier))
+                    if self.is_global(dependency_path):
+                        raise ComposesExportError(
+                            f"{dependency_path!r} is a global stylesheet and exports no classes to compose "
+                            f"(in {path!r}); write `composes: {name} from global` to use the literal name"
+                        )
                     dependency = self.import_module(dependency_path)
                     if name not in dependency.classes:
                         raise ComposesExportError(
