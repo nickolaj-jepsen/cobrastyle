@@ -268,3 +268,17 @@ just example flask dev   # run an example app (flask|fastapi|django, dev|prod)
 
 Editing Rust sources is covered by `just sync`/`just test` — uv rebuilds the extension
 whenever they change.
+
+### Releasing
+
+Both Python packages and the Rust crate share one version, kept in lockstep by
+`just bump`. To release:
+
+```sh
+just bump X.Y.Z          # sets the version everywhere
+git commit -am "release: X.Y.Z"
+git tag vX.Y.Z && git push --follow-tags
+```
+
+Pushing the tag runs the release workflow, which verifies the tag matches the
+package version, builds wheels and sdists, and publishes to PyPI.

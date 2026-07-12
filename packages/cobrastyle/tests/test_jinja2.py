@@ -275,6 +275,20 @@ def test_links_with_inherited_head():
     """)
 
 
+def test_include_styles_are_not_seen_by_links():
+    """Includes render in their own context: their stylesheets never reach the page's links()."""
+    templates = {
+        "page.html": '{% include "_partial.html" %}{{ cobrastyle.links() }}',
+        "_partial.html": '{% cobrastyle styles = "partial.css" %}<span class="{{ styles.x }}"></span>',
+    }
+    jinja = make_environment({"partial.css": ".x { color: red; }"}, templates)
+
+    result = jinja.get_template("page.html").render()
+
+    assert 'class="x"' in result
+    assert "partial.css" not in result  # documented limitation; see the README caveat
+
+
 def test_dynamic_path_is_rejected():
     jinja = make_environment({"test.css": ".a {}"})
     with pytest.raises(TemplateSyntaxError, match="constant string"):

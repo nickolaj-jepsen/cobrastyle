@@ -44,7 +44,7 @@ Options for `configure()` (equivalently: set `cobrastyle_*`-prefixed attributes 
 | Option                | Default | Description                                              |
 | --------------------- | ------- | -------------------------------------------------------- |
 | `resolver`            | —       | Required. Resolves stylesheet paths to content/URLs.     |
-| `minify`              | `False` | Minify dev-served CSS (the build always minifies).       |
+| `minify`              | `False` | Minify dev-served CSS (the build minifies by default; `--no-minify` opts out). |
 | `underscore_aliases`  | `True`  | Also expose `hello-world` as `hello_world`.              |
 | `module_pattern`      | `None`  | Class name pattern; `None` means readable `[name]_[local]_[hash]` in dev and compact `[hash]_[local]` in the build. |
 | `targets`             | `None`  | Browserslist queries for vendor prefixing.               |
@@ -54,6 +54,7 @@ Options for `configure()` (equivalently: set `cobrastyle_*`-prefixed attributes 
 
 - The stylesheet path must be a constant string — imports are resolved at
   template compile time.
-- Stylesheets imported by `{% include %}`d templates only appear in `links()`
-  if the include renders before `links()` is evaluated. Import page-level
-  stylesheets in the page template itself.
+- Stylesheets imported by `{% include %}`d templates are never seen by
+  `links()` in the including page (includes render in their own context).
+  Import page-level stylesheets in the page template itself, or link the
+  partial's stylesheet explicitly.

@@ -20,6 +20,11 @@ def fragment_links_html(urls: list[str], *, nonce: str | None = None) -> str:
     The script also reveals elements carrying ``data-cobrastyle-cloak`` once
     every inserted stylesheet has loaded — put the attribute on the fragment
     root to avoid a flash of unstyled content while its CSS is in flight.
+
+    With CSP nonces, htmx 2 is required (or htmx 1.x with
+    ``htmx.config.inlineScriptNonce``): htmx 1.x re-creates OOB scripts after
+    DOM insertion, by which point the browser has hidden the nonce attribute,
+    so CSP blocks the script and the fragment stays unstyled.
     """
     if not urls:
         return ""

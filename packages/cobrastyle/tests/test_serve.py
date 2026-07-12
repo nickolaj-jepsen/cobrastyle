@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+from typing import Any
 
 import pytest
 
@@ -8,10 +9,15 @@ from cobrastyle import CobrastyleManager, FileSystemResolver, InMemoryResolver
 from cobrastyle.serve import CobrastyleASGIApp, CobrastyleWSGIMiddleware, error_css, get_css, get_resource, serve
 
 
-def test_get_css_compiles():
-    manager = CobrastyleManager(
-        InMemoryResolver({"test.css": ".a { color: red; }"}), module_pattern="[local]", minify=True, source_map=False
+def make_manager(resources: dict[str, str] | None = None, **kwargs: Any) -> CobrastyleManager:
+    options: dict[str, Any] = {"module_pattern": "[local]", "minify": True, "source_map": False} | kwargs
+    return CobrastyleManager(
+        InMemoryResolver({"test.css": ".a { color: red; }"} if resources is None else resources), **options
     )
+
+
+def test_get_css_compiles():
+    manager = make_manager()
 
     result = get_css(manager, "test.css")
 
@@ -139,9 +145,7 @@ def test_raw_resource_unknown_extension_is_octet_stream():
 
 
 def test_serve_head_has_headers_but_no_body():
-    manager = CobrastyleManager(
-        InMemoryResolver({"test.css": ".a { color: red; }"}), module_pattern="[local]", minify=True, source_map=False
-    )
+    manager = make_manager()
 
     result = serve(manager, "test.css", method="HEAD")
 
@@ -154,9 +158,7 @@ def test_serve_head_has_headers_but_no_body():
 
 
 def test_serve_if_none_match_forms():
-    manager = CobrastyleManager(
-        InMemoryResolver({"test.css": ".a { color: red; }"}), module_pattern="[local]", minify=True, source_map=False
-    )
+    manager = make_manager()
     first = serve(manager, "test.css")
     assert first is not None
     etag = dict(first.headers)["ETag"]
@@ -190,9 +192,7 @@ def _wsgi_get(app, path, headers=None, method="GET"):
 
 
 def test_wsgi_middleware_serves_and_falls_through():
-    manager = CobrastyleManager(
-        InMemoryResolver({"test.css": ".a { color: red; }"}), module_pattern="[local]", minify=True, source_map=False
-    )
+    manager = make_manager()
 
     def fallback(environ, start_response):
         start_response("200 OK", [("Content-Type", "text/plain")])
@@ -232,9 +232,7 @@ def test_wsgi_middleware_serves_raw_assets():
 
 
 def test_wsgi_middleware_normalizes_a_slashless_prefix():
-    manager = CobrastyleManager(
-        InMemoryResolver({"test.css": ".a { color: red; }"}), module_pattern="[local]", minify=True, source_map=False
-    )
+    manager = make_manager()
 
     def fallback(environ, start_response):
         start_response("404 Not Found", [])
@@ -294,9 +292,7 @@ def _asgi_request(app, method="GET", path="/test.css", headers=(), root_path="")
 
 
 def test_asgi_app_serves_css():
-    manager = CobrastyleManager(
-        InMemoryResolver({"test.css": ".a { color: red; }"}), module_pattern="[local]", minify=True, source_map=False
-    )
+    manager = make_manager()
     app = CobrastyleASGIApp(manager)
 
     status, headers, body = _asgi_request(app)
@@ -330,9 +326,7 @@ def test_asgi_app_serves_raw_assets():
 
 
 def test_asgi_app_strips_the_mount_root_path():
-    manager = CobrastyleManager(
-        InMemoryResolver({"test.css": ".a { color: red; }"}), module_pattern="[local]", minify=True, source_map=False
-    )
+    manager = make_manager()
     app = CobrastyleASGIApp(manager)
 
     status, _, body = _asgi_request(app, path="/cobrastyle/test.css", root_path="/cobrastyle")

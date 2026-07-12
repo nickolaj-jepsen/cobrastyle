@@ -9,7 +9,7 @@ uv run uvicorn app:app --reload
 ```
 
 Open http://127.0.0.1:8000/ — stylesheets in `styles/` compile on demand and are served
-at `/cobrastyle/`. Edit a `.css` file and refresh.
+at `/cobrastyle/`. Edit a `.css` file and the styles update in the open page without a reload.
 
 ## Prod mode
 

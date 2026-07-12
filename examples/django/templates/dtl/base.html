@@ -3,8 +3,7 @@
   <head>
     <meta charset="utf-8">
     <title>{% block title %}cobrastyle demo{% endblock %}</title>
-    {# link collection is per top-level template, so the parent lists its own module #}
-    {% cobrastyle_links "base.css" %}
+    {% cobrastyle_links %}
     <script src="https://unpkg.com/htmx.org@2.0.7" defer></script>
   </head>
   <body class="{{ layout.page }}">

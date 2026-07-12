@@ -21,9 +21,14 @@ else:
 
 @app.get("/")
 def index(request: Request):
-    return templates.TemplateResponse(request, "index.html")
+    return templates.TemplateResponse(request, "index.html", {"featured": True})
 
 
 @app.get("/about")
 def about(request: Request):
     return templates.TemplateResponse(request, "about.html")
+
+
+@app.get("/fragments/tip")
+def tip_fragment(request: Request):
+    return templates.TemplateResponse(request, "_tip.html")

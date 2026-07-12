@@ -117,6 +117,15 @@ def test_fastapi_example(copy_example, monkeypatch):
     about_css = client.get("/cobrastyle/about.css").text
     assert "@import" not in about_css  # theme.css is bundled in
     assert "code {" in about_css
+    assert "sourceMappingURL=data:application/json;base64," in about_css
+
+    # Hot reload is on in dev; the HTMX fragment links its stylesheet out-of-band
+    assert 'src="/cobrastyle/__client__.js"' in html
+    assert client.get("/cobrastyle/__client__.js").status_code == 200
+    assert "tip.css" not in html  # the page itself never links the fragment's module
+    fragment = client.get("/fragments/tip").text
+    assert '<div hx-swap-oob="beforeend:head"><script>' in fragment
+    assert '"/cobrastyle/tip.css"' in fragment
 
     build(
         module.templates.env,
@@ -127,7 +136,8 @@ def test_fastapi_example(copy_example, monkeypatch):
     monkeypatch.setenv("COBRASTYLE_ENV", "prod")
     prod_module = load_module(project / "app.py", "cobrastyle_example_fastapi_prod")
     prod = TestClient(prod_module.app)
-    hrefs = css_hrefs(prod.get("/").text)
+    prod_html = prod.get("/").text
+    hrefs = css_hrefs(prod_html)
     assert hrefs
     assert all(href.startswith("/static/cobrastyle/") for href in hrefs)
     index_href = next(href for href in hrefs if "index" in href)
@@ -135,6 +145,17 @@ def test_fastapi_example(copy_example, monkeypatch):
     assert built.status_code == 200
     asset_url = resolve_asset_ref(index_href, built.text, "dots")
     assert prod.get(asset_url).status_code == 200
+    about_hrefs = css_hrefs(prod.get("/about").text)
+    built_about = prod.get(next(href for href in about_hrefs if "about" in href)).text
+    assert "code{" in built_about  # @import bundled, then minified
+
+    # Fragments work from the manifest too: hashed URL, no hot-reload script
+    assert "__client__.js" not in prod_html
+    prod_fragment = prod.get("/fragments/tip").text
+    assert '<div hx-swap-oob="beforeend:head"><script>' in prod_fragment
+    tip_url = extract_fragment_url(prod_fragment, "tip")
+    assert tip_url.startswith("/static/cobrastyle/")
+    assert prod.get(tip_url).status_code == 200
 
 
 def test_django_example(copy_example, monkeypatch):

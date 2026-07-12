@@ -4,7 +4,7 @@ import pytest
 from click.testing import CliRunner
 from jinja2 import DictLoader, Environment
 
-from cobrastyle.build import BuildError
+from cobrastyle.build import BuildError, build
 from cobrastyle.check import UsageCollector, check_jinja2
 from cobrastyle.cli import cli
 from cobrastyle.jinja2 import CobrastyleExtension, configure
@@ -32,6 +32,30 @@ def test_valid_references_pass():
     assert report.unused == {}
     assert report.references == 2
     assert report.failures() == []
+
+
+def test_check_resolves_from_the_manifest_in_prod_mode(tmp_path):
+    # The CLI promises: class maps come from the built manifest when the target
+    # is configured in prod mode — no compiler needed.
+    templates = {"index.html": '{% cobrastyle styles = "page.css" %}{{ styles.buttom }}'}
+    dev = Environment(loader=DictLoader(templates), extensions=[CobrastyleExtension])
+    configure(
+        dev,
+        resolver=InMemoryResolver({"page.css": ".title { color: red } .button { color: blue }"}),
+        module_pattern="[local]",
+    )
+    build(dev, output_dir=tmp_path)
+
+    prod = Environment(loader=DictLoader(templates), extensions=[CobrastyleExtension])
+    configure(prod, manifest=tmp_path / "manifest.json")
+    collector = UsageCollector()
+    check_jinja2(prod, collector)
+    report = collector.report()
+
+    [problem] = report.unknown
+    assert problem.attr == "buttom"
+    assert problem.suggestion == "button"
+    assert "page.css" in report.unused  # title and button both unreferenced
 
 
 def test_reference_before_the_binding_is_not_flagged():
