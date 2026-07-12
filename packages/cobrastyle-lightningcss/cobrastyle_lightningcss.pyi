@@ -1,7 +1,15 @@
 from typing import Protocol, final
 
 class TransformError(ValueError):
-    """Raised when a stylesheet cannot be parsed, minified or printed."""
+    """Raised when a stylesheet cannot be parsed, minified or printed.
+
+    For errors with a source location, ``filename``, ``line`` (1-based) and
+    ``column`` (1-based) are set; otherwise all three are None.
+    """
+
+    filename: str | None
+    line: int | None
+    column: int | None
 
 class CssModuleReference:
     @final
@@ -143,6 +151,7 @@ def bundle(
             ``BundleResult.map``.
 
     Raises:
-        TransformError: If any stylesheet cannot be read, resolved or
-            processed, or an ``@import`` condition is unsupported.
+        TransformError: If any stylesheet cannot be parsed, minified or
+            printed, or an ``@import`` condition is unsupported. Exceptions
+            raised by ``provider`` methods propagate unchanged.
     """

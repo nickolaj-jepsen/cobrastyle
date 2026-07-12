@@ -91,6 +91,32 @@ def test_parse_error():
     assert issubclass(TransformError, ValueError)
 
 
+def test_parse_error_location_is_one_based():
+    with pytest.raises(TransformError, match=r"at test\.css:3:2") as excinfo:
+        transform(filename="test.css", code="\n\n..a { color: red; }")
+
+    assert excinfo.value.filename == "test.css"
+    assert excinfo.value.line == 3
+    assert excinfo.value.column == 2
+
+
+def test_error_without_location_has_none_attributes():
+    with pytest.raises(TransformError) as excinfo:
+        transform(filename="test.css", code=".a {}", targets=["not a real browser query %%"])
+
+    assert excinfo.value.filename is None
+    assert excinfo.value.line is None
+    assert excinfo.value.column is None
+
+
+def test_classes_report_their_module():
+    result = transform(filename="test.css", code=".a { color: red; }")
+
+    assert type(result).__module__ == "cobrastyle_lightningcss"
+    assert "TransformResult" in repr(result)
+    assert "color: red" in repr(result)
+
+
 def test_invalid_module_pattern():
     with pytest.raises(TransformError, match="pattern"):
         transform(filename="test.css", code=".a {}", module=True, module_pattern="[unknown]")
@@ -310,20 +336,37 @@ def test_bundle_source_map_covers_all_sources():
     assert len(map_data["sourcesContent"]) == 2
 
 
-def test_bundle_missing_import_raises():
+def test_bundle_missing_import_propagates_the_provider_error():
     provider = DictProvider({"entry.css": '@import "missing.css";'})
 
-    with pytest.raises(TransformError, match=r"missing\.css"):
+    with pytest.raises(KeyError, match=r"missing\.css"):
         bundle(filename="entry.css", provider=provider)
 
 
-def test_bundle_provider_exception_message_is_preserved():
+def test_bundle_provider_exception_propagates_unchanged():
     class ExplodingProvider(DictProvider):
         def read(self, path: str) -> str:
             raise OSError(f"cannot read {path}")
 
-    with pytest.raises(TransformError, match=r"cannot read entry\.css"):
+    with pytest.raises(OSError, match=r"cannot read entry\.css") as excinfo:
         bundle(filename="entry.css", provider=ExplodingProvider({}))
+    assert type(excinfo.value) is OSError
+
+
+def test_bundle_provider_base_exception_escapes():
+    class InterruptingProvider(DictProvider):
+        def read(self, path: str) -> str:
+            raise KeyboardInterrupt
+
+    def bundle_catching_ordinary_exceptions():
+        # Must not be swallowed into a catchable TransformError: except Exception can't eat it
+        try:
+            bundle(filename="entry.css", provider=InterruptingProvider({}))
+        except Exception as exc:
+            raise AssertionError(f"provider BaseException was downgraded to {type(exc).__name__}") from exc
+
+    with pytest.raises(KeyboardInterrupt):
+        bundle_catching_ordinary_exceptions()
 
 
 def test_bundle_circular_import_is_deduplicated():
@@ -399,12 +442,13 @@ def test_bundle_keeps_protocol_relative_and_fragment_imports():
     assert result.files == ["entry.css"]
 
 
-def test_bundle_provider_resolve_exception_message_is_preserved():
+def test_bundle_provider_resolve_exception_propagates_unchanged():
     class BadResolve(DictProvider):
         def resolve(self, specifier: str, from_path: str) -> str:
             raise ValueError(f"cannot resolve {specifier}")
 
     provider = BadResolve({"entry.css": '@import "other.css";', "other.css": ""})
 
-    with pytest.raises(TransformError, match=r"cannot resolve other\.css"):
+    with pytest.raises(ValueError, match=r"cannot resolve other\.css") as excinfo:
         bundle(filename="entry.css", provider=provider)
+    assert type(excinfo.value) is ValueError  # the original, not a TransformError wrapper

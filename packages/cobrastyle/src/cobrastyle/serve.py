@@ -13,6 +13,7 @@ from http import HTTPStatus
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 from cobrastyle.errors import CobrastyleError, StylesheetNotFoundError, StylesheetPathError
+from cobrastyle.paths import normalize_path
 
 if TYPE_CHECKING:
     from wsgiref.types import StartResponse, WSGIApplication, WSGIEnvironment
@@ -219,13 +220,15 @@ def get_css(manager: CobrastyleManager, path: str) -> tuple[str, str] | None:
     if not path.endswith(".css"):
         return None
     try:
-        stylesheet = manager.import_module(path)
+        path = normalize_path(path)
     except StylesheetPathError:
         return None
+    try:
+        stylesheet = manager.import_module(path)
     except StylesheetNotFoundError as exc:
         if exc.path == path:
             return None
-        raise  # a missing composes dependency is a compile failure, not a 404
+        raise  # a missing @import or composes dependency is a compile failure, not a 404
     code = stylesheet.code
     if stylesheet.map is not None:
         encoded = base64.b64encode(stylesheet.map.encode()).decode()

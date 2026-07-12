@@ -350,6 +350,14 @@ def test_missing_module_raises_stylesheet_not_found():
     assert excinfo.value.path == "missing.css"
 
 
+def test_missing_import_dependency_raises_stylesheet_not_found():
+    manager = CobrastyleManager(InMemoryResolver({"entry.css": '@import "missing.css";'}))
+
+    with pytest.raises(StylesheetNotFoundError, match=r"'missing\.css' not found") as excinfo:
+        manager.import_module("entry.css")
+    assert excinfo.value.path == "missing.css"
+
+
 def test_concurrent_imports_compile_once():
     resolver = CountingResolver({"test.css": ".a { color: red; }"})
     manager = CobrastyleManager(resolver)

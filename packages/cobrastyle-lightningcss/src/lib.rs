@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Mutex;
 
-use lightningcss::bundler::{Bundler, ResolveResult, SourceProvider};
+use lightningcss::bundler::{BundleErrorKind, Bundler, ResolveResult, SourceProvider};
 use lightningcss::css_modules::{self, Pattern};
 use lightningcss::dependencies::{self, DependencyOptions};
 use lightningcss::printer::PrinterOptions;
@@ -17,15 +17,28 @@ create_exception!(
     cobrastyle_lightningcss,
     TransformError,
     PyValueError,
-    "Raised when a stylesheet cannot be parsed, minified or printed."
+    "Raised when a stylesheet cannot be parsed, minified or printed. \
+     For errors with a source location, `filename`, `line` (1-based) and `column` are set."
 );
 
-#[pyclass(frozen, get_all, skip_from_py_object)]
+#[pyclass(
+    frozen,
+    get_all,
+    skip_from_py_object,
+    module = "cobrastyle_lightningcss"
+)]
 #[derive(Clone, Debug)]
 pub struct CssModuleExport {
     name: String,
     composes: Vec<CssModuleReference>,
     is_referenced: bool,
+}
+
+#[pymethods]
+impl CssModuleExport {
+    fn __repr__(&self) -> String {
+        format!("{self:?}")
+    }
 }
 
 impl From<css_modules::CssModuleExport> for CssModuleExport {
@@ -38,7 +51,7 @@ impl From<css_modules::CssModuleExport> for CssModuleExport {
     }
 }
 
-#[pyclass(frozen, eq, skip_from_py_object)]
+#[pyclass(frozen, eq, skip_from_py_object, module = "cobrastyle_lightningcss")]
 #[derive(Clone, Debug, PartialEq)]
 pub enum CssModuleReference {
     Local { name: String },
@@ -59,7 +72,7 @@ impl From<css_modules::CssModuleReference> for CssModuleReference {
 }
 
 // from_py_object: the Dependency enum's generated constructors extract this field type
-#[pyclass(frozen, get_all, from_py_object)]
+#[pyclass(frozen, get_all, from_py_object, module = "cobrastyle_lightningcss")]
 #[derive(Clone, Debug)]
 pub struct SourceRange {
     file_path: String,
@@ -67,6 +80,13 @@ pub struct SourceRange {
     start_column: u32,
     end_line: u32,
     end_column: u32,
+}
+
+#[pymethods]
+impl SourceRange {
+    fn __repr__(&self) -> String {
+        format!("{self:?}")
+    }
 }
 
 impl From<dependencies::SourceRange> for SourceRange {
@@ -81,7 +101,7 @@ impl From<dependencies::SourceRange> for SourceRange {
     }
 }
 
-#[pyclass(frozen, skip_from_py_object)]
+#[pyclass(frozen, skip_from_py_object, module = "cobrastyle_lightningcss")]
 #[derive(Clone, Debug)]
 pub enum Dependency {
     Url {
@@ -117,7 +137,12 @@ impl From<dependencies::Dependency> for Dependency {
     }
 }
 
-#[pyclass(frozen, get_all, skip_from_py_object)]
+#[pyclass(
+    frozen,
+    get_all,
+    skip_from_py_object,
+    module = "cobrastyle_lightningcss"
+)]
 #[derive(Clone, Debug)]
 pub struct TransformResult {
     /// The transformed CSS code.
@@ -128,6 +153,13 @@ pub struct TransformResult {
     dependencies: Option<Vec<Dependency>>,
     /// The source map as JSON, if requested.
     map: Option<String>,
+}
+
+#[pymethods]
+impl TransformResult {
+    fn __repr__(&self) -> String {
+        format!("{self:?}")
+    }
 }
 
 impl From<ToCssResult> for TransformResult {
@@ -148,7 +180,12 @@ impl From<ToCssResult> for TransformResult {
     }
 }
 
-#[pyclass(frozen, get_all, skip_from_py_object)]
+#[pyclass(
+    frozen,
+    get_all,
+    skip_from_py_object,
+    module = "cobrastyle_lightningcss"
+)]
 #[derive(Clone, Debug)]
 pub struct BundleResult {
     /// The bundled CSS code, with every non-external `@import` inlined.
@@ -163,8 +200,79 @@ pub struct BundleResult {
     map: Option<String>,
 }
 
+#[pymethods]
+impl BundleResult {
+    fn __repr__(&self) -> String {
+        format!("{self:?}")
+    }
+}
+
 fn transform_error(context: &str, error: impl std::fmt::Display) -> PyErr {
-    TransformError::new_err(format!("{context}: {error}"))
+    let message = format!("{context}: {error}");
+    Python::attach(|py| {
+        let err = TransformError::new_err(message);
+        let value = err.value(py);
+        value.setattr("filename", py.None()).ok();
+        value.setattr("line", py.None()).ok();
+        value.setattr("column", py.None()).ok();
+        err
+    })
+}
+
+/// A [`TransformError`] carrying the error's source location, both in the
+/// message and as `filename`/`line`/`column` attributes (None when absent).
+fn located_error<T: std::fmt::Display>(
+    context: &str,
+    error: &lightningcss::error::Error<T>,
+) -> PyErr {
+    // lightningcss locations are 0-based lines / 1-based columns; expose the editor convention
+    let message = match &error.loc {
+        Some(loc) => format!(
+            "{context}: {} at {}:{}:{}",
+            error.kind,
+            loc.filename,
+            loc.line + 1,
+            loc.column
+        ),
+        None => format!("{context}: {}", error.kind),
+    };
+    Python::attach(|py| {
+        let err = TransformError::new_err(message);
+        let value = err.value(py);
+        let loc = error.loc.as_ref();
+        value
+            .setattr("filename", loc.map(|l| l.filename.as_str()))
+            .ok();
+        value.setattr("line", loc.map(|l| l.line + 1)).ok();
+        value.setattr("column", loc.map(|l| l.column)).ok();
+        err
+    })
+}
+
+fn minify_and_print(
+    stylesheet: &mut StyleSheet<'_, '_>,
+    targets: Targets,
+    minify: bool,
+    dependencies: Option<DependencyOptions>,
+    map: Option<&mut SourceMap>,
+) -> PyResult<TransformResult> {
+    stylesheet
+        .minify(MinifyOptions {
+            targets,
+            ..Default::default()
+        })
+        .map_err(|e| located_error("Failed to minify stylesheet", &e))?;
+
+    stylesheet
+        .to_css(PrinterOptions {
+            minify,
+            targets,
+            analyze_dependencies: dependencies,
+            source_map: map,
+            ..Default::default()
+        })
+        .map(TransformResult::from)
+        .map_err(|e| located_error("Failed to print stylesheet", &e))
 }
 
 fn browser_targets(targets: Option<&Vec<String>>) -> PyResult<Targets> {
@@ -203,13 +311,15 @@ fn serialize_source_map(map: Option<SourceMap>) -> PyResult<Option<String>> {
     .transpose()
 }
 
-/// A [`SourceProvider`] error carrying the message of the Python exception it wraps.
+/// A [`SourceProvider`] error carrying the Python exception it wraps, so the
+/// original exception (type, traceback and all) can be re-raised after the
+/// bundler unwinds — including `BaseException`s like `KeyboardInterrupt`.
 #[derive(Debug)]
-struct ProviderError(String);
+struct ProviderError(PyErr);
 
 impl std::fmt::Display for ProviderError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
+        write!(f, "{}", self.0)
     }
 }
 
@@ -252,8 +362,12 @@ unsafe impl Send for PySourceProvider {}
 unsafe impl Sync for PySourceProvider {}
 
 fn utf8_path(path: &Path) -> Result<&str, ProviderError> {
-    path.to_str()
-        .ok_or_else(|| ProviderError(format!("Non-UTF-8 stylesheet path: {}", path.display())))
+    path.to_str().ok_or_else(|| {
+        ProviderError(TransformError::new_err(format!(
+            "Non-UTF-8 stylesheet path: {}",
+            path.display()
+        )))
+    })
 }
 
 impl PySourceProvider {
@@ -268,7 +382,7 @@ impl PySourceProvider {
             };
             result
                 .and_then(|value| value.extract::<String>())
-                .map_err(|error| ProviderError(error.to_string()))
+                .map_err(ProviderError)
         })
     }
 }
@@ -354,14 +468,7 @@ pub fn transform(
                 ..Default::default()
             },
         )
-        .map_err(|e| transform_error("Failed to parse stylesheet", e))?;
-
-        stylesheet
-            .minify(MinifyOptions {
-                targets,
-                ..Default::default()
-            })
-            .map_err(|e| transform_error("Failed to minify stylesheet", e))?;
+        .map_err(|e| located_error("Failed to parse stylesheet", &e))?;
 
         let mut map = source_map.then(|| SourceMap::new("/"));
         if let Some(map) = &mut map {
@@ -371,17 +478,13 @@ pub fn transform(
             map.set_source_content(index as usize, &code)
                 .map_err(|e| transform_error("Failed to embed source content", e))?;
         }
-        let mut result: TransformResult = stylesheet
-            .to_css(PrinterOptions {
-                minify,
-                targets,
-                analyze_dependencies: analyze_dependencies
-                    .then_some(DependencyOptions { remove_imports }),
-                source_map: map.as_mut(),
-                ..Default::default()
-            })
-            .map(TransformResult::from)
-            .map_err(|e| transform_error("Failed to print stylesheet", e))?;
+        let mut result = minify_and_print(
+            &mut stylesheet,
+            targets,
+            minify,
+            analyze_dependencies.then_some(DependencyOptions { remove_imports }),
+            map.as_mut(),
+        )?;
 
         result.map = serialize_source_map(map)?;
         Ok(result)
@@ -450,28 +553,29 @@ pub fn bundle(
             );
             bundler
                 .bundle(Path::new(&filename))
-                .map_err(|e| transform_error("Failed to bundle stylesheet", e))?
+                .map_err(|error| match error.kind {
+                    // Provider failures re-raise the original Python exception — a
+                    // KeyboardInterrupt must escape as itself, not as a catchable TransformError
+                    BundleErrorKind::ResolverError(ProviderError(err)) => err,
+                    kind => located_error(
+                        "Failed to bundle stylesheet",
+                        &lightningcss::error::Error {
+                            kind,
+                            loc: error.loc,
+                        },
+                    ),
+                })?
         };
 
-        stylesheet
-            .minify(MinifyOptions {
-                targets,
-                ..Default::default()
-            })
-            .map_err(|e| transform_error("Failed to minify stylesheet", e))?;
-
-        let result: TransformResult = stylesheet
-            .to_css(PrinterOptions {
-                minify,
-                targets,
-                analyze_dependencies: analyze_dependencies.then_some(DependencyOptions {
-                    remove_imports: false,
-                }),
-                source_map: map.as_mut(),
-                ..Default::default()
-            })
-            .map(TransformResult::from)
-            .map_err(|e| transform_error("Failed to print stylesheet", e))?;
+        let result = minify_and_print(
+            &mut stylesheet,
+            targets,
+            minify,
+            analyze_dependencies.then_some(DependencyOptions {
+                remove_imports: false,
+            }),
+            map.as_mut(),
+        )?;
 
         let mut files = std::mem::take(&mut *provider.files.lock().unwrap());
         files.sort();

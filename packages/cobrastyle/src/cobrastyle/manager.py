@@ -44,7 +44,10 @@ class _BundleProvider:
         # The manager already resolved the entry (for its URL and mtime)
         if path == self.entry:
             return self.entry_content
-        return self.resolver.resolve(path).content
+        try:
+            return self.resolver.resolve(path).content
+        except (KeyError, OSError) as exc:
+            raise StylesheetNotFoundError(f"Stylesheet {path!r} not found by the resolver", path=path) from exc
 
     def resolve(self, specifier: str, from_path: str) -> str:
         return normalize_path(posixpath.join(posixpath.dirname(from_path), specifier))
