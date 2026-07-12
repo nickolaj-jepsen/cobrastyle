@@ -17,9 +17,14 @@ def fragment_links_html(urls: list[str], *, nonce: str | None = None) -> str:
     Empty when ``urls`` is; ``nonce`` feeds a CSP script-src nonce attribute.
     The returned markup is safe to mark safe: everything interpolated is escaped.
 
+    Render it *after* the fragment's own markup. htmx parses a partial inside a
+    ``<template>``, where the first start tag fixes the parser's insertion mode,
+    so this carrier in front of a ``<tr>`` makes the parser throw the row away.
+    htmx collects out-of-band elements wherever they sit, so trailing costs nothing.
+
     The script also reveals elements carrying ``data-cobrastyle-cloak`` once
-    every inserted stylesheet has loaded — put the attribute on the fragment
-    root to avoid a flash of unstyled content while its CSS is in flight.
+    every fragment stylesheet in flight has loaded — put the attribute on the
+    fragment root to avoid a flash of unstyled content while its CSS loads.
 
     With CSP nonces, htmx 2 is required (or htmx 1.x with
     ``htmx.config.inlineScriptNonce``): htmx 1.x re-creates OOB scripts after

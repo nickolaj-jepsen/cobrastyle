@@ -173,19 +173,19 @@ Set `global_patterns=["vendor/**"]` to mark files you cannot rename (in Django,
 
 A template rendered as a fragment (an HTMX partial swap) never renders `<head>`, so a
 stylesheet only the fragment uses would arrive unlinked. Call `fragment_links()` in the
-fragment instead of `links()`:
+fragment instead of `links()`, **after** the fragment's own markup:
 
 ```jinja
 {% cobrastyle styles = "tip.css" %}
-{{ cobrastyle.fragment_links() }}
 <aside class="{{ styles.tip }}" data-cobrastyle-cloak>...</aside>
+{{ cobrastyle.fragment_links() }}
 ```
 
 ```django
 {% load cobrastyle %}
 {% cobrastyle "tip.css" as styles %}
-{% cobrastyle_fragment_links %}
 <aside class="{{ styles.tip }}" data-cobrastyle-cloak>...</aside>
+{% cobrastyle_fragment_links %}
 ```
 
 This emits a small out-of-band script (`hx-swap-oob="beforeend:head"`) that appends the fragment's
@@ -194,18 +194,34 @@ itself. HTMX processes out-of-band elements before the main swap, so the CSS sta
 loading before the fragment markup lands, and repeated swaps never duplicate links.
 Dev and prod behave the same; URLs come from the compiler or the manifest as usual.
 
+The order matters. HTMX parses a partial inside a `<template>`, where the first start tag
+fixes the parser's insertion mode: the script's carrier `<div>` in front of a `<tr>` puts
+the parser in "in body" mode, and the row is then a parse error the parser silently drops.
+Calling last costs nothing — HTMX collects out-of-band elements wherever they sit.
+(A table-root fragment needs HTMX 2 either way; on 1.x the carrier is foster-parented out
+of the response and the stylesheet never loads. A `<col>` or `<colgroup>` root can't carry
+the call at all, so link that stylesheet from the page.)
+
 Inserted links still take a network round trip to load, so a fragment can paint
 unstyled for a moment. The `data-cobrastyle-cloak` attribute on the fragment root (as
-above) closes that gap: such elements stay hidden until every stylesheet the script
-inserted has loaded, then reveal fully styled — immediately when the CSS was already
-present, and after at most 3 seconds if a stylesheet never loads. Only use the
-attribute in fragments that call `fragment_links()`; the reveal is part of it.
+above) closes that gap: such elements stay hidden until every fragment stylesheet in
+flight has loaded, then reveal fully styled — immediately when the CSS was already
+present, and after at most 3 seconds if a stylesheet never loads. A cloaked element that
+arrives with no fragment loading (a fragment that links no stylesheet, an HTMX history
+restore) is inert, not hidden, so a lone `data-cobrastyle-cloak` never strands content;
+it just buys nothing.
 
 Two caveats. The markup relies on HTMX's `hx-swap-oob` handling, so a swap done with
-plain `fetch()` + `innerHTML` will not execute it. And the script is inline: under a
-strict CSP, pass a nonce — `{{ cobrastyle.fragment_links(nonce=nonce) }}` in Jinja,
-`{% cobrastyle_fragment_links nonce=request.csp_nonce %}` in DTL. The nonce carries
-over to the cloak `<style>` the script creates, so allow it in `style-src` too.
+plain `fetch()` + `innerHTML` will not execute it (nor will HTMX with
+`htmx.config.allowScriptTags = false`, which strips the script from the response — the
+fragment then arrives unstyled). And the script is inline: under a strict CSP, either set
+`htmx.config.inlineScriptNonce`, which HTMX stamps onto every inline script it re-creates
+including this one, or pass a nonce per call — `{{ cobrastyle.fragment_links(nonce=nonce) }}`
+in Jinja, `{% cobrastyle_fragment_links nonce=request.csp_nonce %}` in DTL. The nonce
+carries over to the cloak `<style>` the script creates, so allow it in `style-src` too;
+without that the cloak silently no-ops (you get the flash it exists to prevent, nothing
+more). Note that adding a nonce to `style-src` makes CSP3 ignore an `'unsafe-inline'`
+you may be relying on elsewhere.
 
 ### CSS hot reload (dev)
 

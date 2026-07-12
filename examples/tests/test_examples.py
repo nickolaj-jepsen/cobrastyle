@@ -72,6 +72,8 @@ def test_flask_example(copy_example, monkeypatch):
     fragment = client.get("/fragments/tip").get_data(as_text=True)
     assert '<div hx-swap-oob="beforeend:head"><script>' in fragment
     assert '"/cobrastyle/tip.css"' in fragment
+    # The carrier trails the content: leading it, HTMX's <template> parse drops a <tr> root
+    assert fragment.index("<aside") < fragment.index("hx-swap-oob")
 
     build(
         module.create_app().jinja_env,
