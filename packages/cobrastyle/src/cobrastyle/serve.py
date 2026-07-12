@@ -90,6 +90,11 @@ class Served(NamedTuple):
 # the old one once the clone has loaded, so the page never renders unstyled.
 CLIENT_JS = """\
 (() => {
+  // htmx re-executes <script> tags it swaps in: without this, a fragment that rendered
+  // links() instead of fragment_links() opens an EventSource per swap until the tab
+  // hits the browser's per-origin connection cap and every later request hangs.
+  if (window.__cobrastyleHotReload) return;
+  window.__cobrastyleHotReload = true;
   const source = new EventSource(document.currentScript.dataset.events);
   source.addEventListener("change", (event) => {
     const { url } = JSON.parse(event.data);

@@ -56,6 +56,16 @@ def test_manifest_pages_fallback():
     assert dev.manifest_pages("index.html") is None
 
 
+def test_fragment_markup_is_memoized_but_a_nonce_never_is():
+    source = StyleSource(manifest=make_manifest())
+
+    assert '<script nonce="aaa">' in source.fragment_links_html(["page.css"], nonce="aaa")
+    assert '<script nonce="bbb">' in source.fragment_links_html(["page.css"], nonce="bbb")
+    # A memoized nonce would serve one client's nonce to every later one, and CSP would block them all
+    assert 'nonce="' not in source.fragment_links_html(["page.css"])
+    assert source.fragment_links_html(["page.css"]) is source.fragment_links_html(["page.css"])
+
+
 def test_manifest_url_map_runs_once_per_path():
     calls: list[str] = []
 
