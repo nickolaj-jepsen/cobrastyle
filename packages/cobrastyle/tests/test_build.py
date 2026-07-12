@@ -68,6 +68,23 @@ def test_build_writes_hashed_css_and_manifest(project):
     assert on_disk.generator["cobrastyle"]
 
 
+def test_manifest_pages_carry_the_whole_template_graph(project):
+    """A page's entry is its closure: what it inherits and includes, not only its own tags."""
+    (project / "templates" / "_partial.html").write_text('{% cobrastyle c = "styles/card.css" %}{{ c.card }}')
+    (project / "templates" / "base.html").write_text(
+        '{% cobrastyle b = "styles/button.css" %}{{ cobrastyle.links() }}{% block content %}{% endblock %}'
+    )
+    (project / "templates" / "index.html").write_text(
+        '{% extends "base.html" %}{% block content %}{% cobrastyle styles = "styles/page.css" %}'
+        '{% include "_partial.html" %}{% endblock %}'
+    )
+
+    manifest = build(make_environment(project), output_dir=project / "dist")
+
+    assert manifest.pages["index.html"] == ["styles/button.css", "styles/page.css", "styles/card.css"]
+    assert manifest.pages["_partial.html"] == ["styles/card.css"]
+
+
 def test_build_defaults_to_compact_class_names(project):
     manifest = build(make_environment(project), output_dir=project / "out")
 

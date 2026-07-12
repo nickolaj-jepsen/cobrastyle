@@ -93,6 +93,10 @@ COBRASTYLE = {"ROOT": BASE_DIR / "styles"}   # dev/prod follows DEBUG; override 
 path("cobrastyle/", include("cobrastyle.django.urls")),
 ```
 
+For markup cobrastyle does not write itself, `cobrastyle.stylesheet_url("print.css")`
+returns a module's URL (`{% cobrastyle_url "print.css" %}` in DTL). A module named only
+there is not linked by `links()`, which links what the render's templates import.
+
 Django Template Language works too — same modules, same build:
 
 ```django
@@ -100,7 +104,14 @@ Django Template Language works too — same modules, same build:
 {% cobrastyle "button.css" as styles %}
 <head>{% cobrastyle_links %}</head>
 <button class="{{ styles.button }}"></button>
+<link rel="preload" as="style" href="{% cobrastyle_url "print.css" %}">
 ```
+
+In a template that `{% extends %}` another, put `{% cobrastyle ... as ... %}` inside the
+block that uses it: Django renders nothing else of such a template, so a binding outside
+every block would silently come out empty. Cobrastyle rejects that at parse time. To pull
+a stylesheet into the page without naming its classes there, drop the `as` clause:
+`{% cobrastyle "print.css" %}`.
 
 Deploying is two steps: build, then collect. The finder hands the build output to
 `collectstatic` — except `manifest.json`, which the app reads from the output directory
@@ -241,9 +252,11 @@ silence when resolution is dynamic.
 
 ### Known limitations
 
-- Stylesheets imported inside `{% include %}`d templates aren't seen by `links()` in the
-  including page's head; pass them explicitly (`{% cobrastyle_links "shared/nav.css" %}` in
-  DTL) or import them from the page template.
+- `links()` covers the templates a render names outright: the `{% extends %}` chain and
+  the partials it `{% include %}`s (`{% import %}`s, in Jinja2). A template pulled in
+  through a variable — `{% include partial %}` — cannot be found statically, so its
+  stylesheets need naming by hand: `{% cobrastyle_links "shared/nav.css" %}` in DTL, or an
+  import of the module in the page template.
 
 ## Development
 

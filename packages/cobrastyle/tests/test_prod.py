@@ -95,6 +95,24 @@ def test_prod_links_survive_worker_that_never_compiled(built_project):
     assert manifest.modules["base.css"].url in hrefs
 
 
+def test_prod_links_an_included_partials_stylesheet(tmp_path):
+    templates = tmp_path / "templates"
+    styles = tmp_path / "styles"
+    templates.mkdir()
+    styles.mkdir()
+    (styles / "tip.css").write_text(".tip { color: red; }")
+    (templates / "page.html").write_text('{{ cobrastyle.links() }}{% include "_tip.html" %}')
+    (templates / "_tip.html").write_text('{% cobrastyle tip = "tip.css" %}<aside class="{{ tip.tip }}"></aside>')
+
+    dev_environment = Environment(loader=FileSystemLoader(templates), extensions=[CobrastyleExtension])
+    configure(dev_environment, resolver=FileSystemResolver(styles))
+    manifest = build(dev_environment, output_dir=tmp_path / "dist", url_prefix=URL_PREFIX)
+
+    html = make_prod_environment(tmp_path).get_template("page.html").render()
+
+    assert manifest.modules["tip.css"].url in re.findall(r'href="([^"]+)"', html)
+
+
 def test_configure_requires_exactly_one_mode(built_project):
     environment = Environment(extensions=[CobrastyleExtension])
     untyped_configure = cast(Any, configure)  # the overloads make these calls unwritable in typed code

@@ -3,8 +3,11 @@ from __future__ import annotations
 import threading
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, cast
+from weakref import WeakKeyDictionary
 
-from django.template import Origin, TemplateSyntaxError
+from django.template import Context, Node, Origin, Template, TemplateSyntaxError
+from django.template.exceptions import TemplateDoesNotExist
+from django.template.loader_tags import ExtendsNode, IncludeNode
 from django.utils.safestring import SafeString, mark_safe
 
 from cobrastyle.errors import StylesheetNotFoundError
@@ -12,9 +15,95 @@ from cobrastyle.manifest import Manifest, ModuleEntry
 from cobrastyle.source import StyleSource
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterable
+
+    from django.template.base import NodeList
+    from django.template.engine import Engine
 
     from cobrastyle.manager import CobrastyleManager
+
+
+class CobrastyleNode(Node):
+    """What ``{% cobrastyle "x.css" [as styles] %}`` compiles to.
+
+    ``classes`` and ``modules`` (the stylesheets the page must link for them to
+    mean anything) both resolve at parse time; rendering only binds the name,
+    and without an ``as`` clause there is no name to bind — the tag just claims
+    the stylesheet for the page. Lives here, not in the tag library, so the
+    template-graph walk below can recognize it without importing the
+    templatetags module that imports this one.
+    """
+
+    def __init__(self, variable_name: str | None, classes: dict[str, str], path: str, modules: tuple[str, ...]):
+        self.variable_name = variable_name
+        self.classes = classes
+        self.path = path
+        self.modules = modules
+
+    def render(self, context: Context) -> str:
+        if self.variable_name is not None:
+            context[self.variable_name] = self.classes
+        return ""
+
+
+def _extends_node(nodelist: NodeList) -> ExtendsNode | None:
+    return next((node for node in nodelist if isinstance(node, ExtendsNode)), None)
+
+
+def _constant_name(expression: object) -> str | None:
+    """The template name a ``{% extends %}``/``{% include %}`` argument names outright, if it does.
+
+    A :class:`FilterExpression` keeps a literal in ``var`` as a plain string;
+    anything else there is a :class:`Variable` resolved per render.
+    """
+    name = getattr(expression, "var", None)
+    if isinstance(name, str) and not getattr(expression, "filters", None):
+        return name
+    return None
+
+
+def _load(engine: Engine, name: str | None) -> Template | None:
+    if name is None:
+        return None
+    try:
+        return engine.get_template(name)
+    except TemplateDoesNotExist:
+        # A referenced template that does not exist is the renderer's problem to
+        # report when it reaches the tag, not the stylesheet walk's.
+        return None
+
+
+def _extend(modules: list[str], paths: Iterable[str]) -> None:
+    for path in paths:
+        if path not in modules:
+            modules.append(path)
+
+
+def _collect_modules(template: Template, modules: list[str], seen: set[str]) -> None:
+    """Walk ``template``'s static graph, appending every module it needs linked.
+
+    Layouts first, then the template's own modules, then the partials it
+    includes — a module re-declaring a rule its layout set wins the cascade.
+    """
+    if template.origin.name in seen:
+        return
+    seen.add(template.origin.name)
+    nodelist = template.nodelist
+
+    inherits = _extends_node(nodelist)
+    layout = _load(template.engine, _constant_name(inherits.parent_name)) if inherits is not None else None
+    if layout is not None:
+        _collect_modules(layout, modules, seen)
+
+    for node in nodelist.get_nodes_by_type(CobrastyleNode):
+        _extend(modules, cast("CobrastyleNode", node).modules)
+
+    for node in nodelist.get_nodes_by_type(IncludeNode):
+        # A dynamic {% include page %} names no template statically; its modules
+        # have to be passed to the links tag by hand.
+        partial = _load(template.engine, _constant_name(cast("IncludeNode", node).template))
+        if partial is not None:
+            _collect_modules(partial, modules, seen)
 
 
 @dataclass
@@ -30,8 +119,9 @@ class PageRecord:
 
 
 class DTLRuntime:
-    """DTL-side state: an engine-agnostic :class:`StyleSource` plus the
-    parse-time page registry keyed by template origin."""
+    """DTL-side state: an engine-agnostic :class:`StyleSource`, the walked template
+    graph behind :meth:`template_modules`, and the parse-time page registry keyed by
+    template origin that covers what the graph cannot reach."""
 
     def __init__(
         self,
@@ -50,6 +140,9 @@ class DTLRuntime:
         )
         # origin.name (absolute) → what the template imported, keyed for the manifest
         self.pages: dict[str, PageRecord] = {}
+        # Keyed by template object, not name: Django's autoreloader resets the
+        # loaders on a template edit, and the re-parsed template is a new object.
+        self._modules: WeakKeyDictionary[Template, tuple[str, ...]] = WeakKeyDictionary()
 
     @property
     def manager(self) -> CobrastyleManager | None:
@@ -86,6 +179,23 @@ class DTLRuntime:
             return cast("SafeString", self.source.fragment_links_html(paths, nonce=nonce))
         except StylesheetNotFoundError as exc:
             raise TemplateSyntaxError(str(exc)) from exc
+
+    def template_modules(self, template: Template | None) -> list[str]:
+        """Every module path ``template`` needs linked, its static graph included.
+
+        The templates it extends and the partials it includes contribute their
+        own modules, so a partial's stylesheet reaches a ``<head>`` that never
+        mentions it. Memoized per parsed template.
+        """
+        if template is None:
+            return []
+        modules = self._modules.get(template)
+        if modules is None:
+            collected: list[str] = []
+            _collect_modules(template, collected, set())
+            modules = tuple(collected)
+            self._modules[template] = modules
+        return list(modules)
 
     def record(self, origin: Origin | None, paths: tuple[str, ...]) -> None:
         """Register the module paths a template imports, at parse time."""

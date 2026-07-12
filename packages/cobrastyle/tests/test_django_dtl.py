@@ -53,6 +53,11 @@ def render(name, context=None):
     return engines["django"].get_template(name).render(context or {})
 
 
+def _hrefs(rendered):
+    """The stylesheet URLs a render linked, in order."""
+    return re.findall(r'<link rel="stylesheet" href="([^"]+)"', rendered)
+
+
 def test_assignment_and_links(project):
     with override_settings(**project_settings(project)):
         html = render("index.html")
@@ -100,7 +105,7 @@ def test_links_with_inherited_head(project):
     assert '<h1 class="title">Hi</h1>' in html
 
 
-def test_include_limitation_and_escape_hatch(project):
+def test_include_styles_reach_links(project):
     (project / "styles" / "nav.css").write_text(".nav { color: blue; }")
     (project / "templates" / "nav.html").write_text(
         '{% load cobrastyle %}{% cobrastyle "nav.css" as styles %}<nav class="{{ styles.nav }}"></nav>'
@@ -108,12 +113,98 @@ def test_include_limitation_and_escape_hatch(project):
     (project / "templates" / "plain_page.html").write_text(
         '{% load cobrastyle %}{% cobrastyle_links %}{% include "nav.html" %}'
     )
+    with override_settings(**project_settings(project)):
+        html = render("plain_page.html")
+
+    assert '<link rel="stylesheet" href="/cobrastyle/nav.css" />' in html.split("<nav")[0]
+    assert '<nav class="nav">' in html
+
+
+def test_dynamically_included_styles_need_an_explicit_path(project):
+    """Only statically named templates join the graph; a variable include needs the escape hatch."""
+    (project / "styles" / "nav.css").write_text(".nav { color: blue; }")
+    (project / "templates" / "nav.html").write_text('{% load cobrastyle %}{% cobrastyle "nav.css" as styles %}')
+    (project / "templates" / "plain_page.html").write_text(
+        "{% load cobrastyle %}{% cobrastyle_links %}{% include partial %}"
+    )
     (project / "templates" / "escape_page.html").write_text(
-        '{% load cobrastyle %}{% cobrastyle_links "nav.css" %}{% include "nav.html" %}'
+        '{% load cobrastyle %}{% cobrastyle_links "nav.css" %}{% include partial %}'
     )
     with override_settings(**project_settings(project)):
-        assert "nav.css" not in render("plain_page.html").split("<nav")[0]
-        assert '<link rel="stylesheet" href="/cobrastyle/nav.css" />' in render("escape_page.html")
+        assert "nav.css" not in render("plain_page.html", {"partial": "nav.html"})
+        assert '<link rel="stylesheet" href="/cobrastyle/nav.css" />' in render(
+            "escape_page.html", {"partial": "nav.html"}
+        )
+
+
+def test_links_cover_the_whole_extends_chain_layouts_first(project):
+    for name in ("mid.css", "child.css"):
+        (project / "styles" / name).write_text(".x { color: red; }")
+    (project / "templates" / "base.html").write_text(
+        '{% load cobrastyle %}{% cobrastyle "base.css" %}<head>{% cobrastyle_links %}</head>'
+        "{% block content %}{% endblock %}"
+    )
+    (project / "templates" / "mid.html").write_text(
+        '{% extends "base.html" %}{% load cobrastyle %}{% cobrastyle "mid.css" %}'
+    )
+    (project / "templates" / "child.html").write_text(
+        '{% extends "mid.html" %}{% load cobrastyle %}{% block content %}'
+        '{% cobrastyle "child.css" as s %}{% endblock %}'
+    )
+    with override_settings(**project_settings(project)):
+        html = render("child.html")
+
+    assert _hrefs(html) == ["/cobrastyle/base.css", "/cobrastyle/mid.css", "/cobrastyle/child.css"]
+
+
+def test_binding_outside_a_block_in_an_extending_template_is_rejected(project):
+    (project / "templates" / "base.html").write_text("{% load cobrastyle %}{% block content %}{% endblock %}")
+    (project / "templates" / "child.html").write_text(
+        '{% extends "base.html" %}{% load cobrastyle %}{% cobrastyle "page.css" as styles %}'
+        '{% block content %}<h1 class="{{ styles.title }}"></h1>{% endblock %}'
+    )
+    with override_settings(**project_settings(project)), pytest.raises(TemplateSyntaxError, match="outside every"):
+        render("child.html")
+
+
+def test_the_build_rejects_a_binding_outside_a_block(project):
+    (project / "templates" / "base.html").write_text("{% load cobrastyle %}{% block content %}{% endblock %}")
+    (project / "templates" / "child.html").write_text(
+        '{% extends "base.html" %}{% load cobrastyle %}{% cobrastyle "page.css" as styles %}'
+        "{% block content %}{% endblock %}"
+    )
+    with override_settings(**project_settings(project)), pytest.raises(CommandError, match="outside every"):
+        call_command("cobrastyle_build", out=str(project / "dist"), verbosity=0)
+
+
+def test_a_stylesheet_can_be_claimed_without_binding_its_classes(project):
+    """No ``as`` clause: the tag links the stylesheet and binds nothing, so it is legal outside a block."""
+    (project / "templates" / "base.html").write_text(
+        "{% load cobrastyle %}<head>{% cobrastyle_links %}</head>{% block content %}{% endblock %}"
+    )
+    (project / "templates" / "child.html").write_text(
+        '{% extends "base.html" %}{% load cobrastyle %}{% cobrastyle "page.css" %}{% block content %}{% endblock %}'
+    )
+    with override_settings(**project_settings(project)):
+        assert _hrefs(render("child.html")) == ["/cobrastyle/page.css"]
+
+
+def test_cobrastyle_url(project):
+    (project / "templates" / "url.html").write_text(
+        '{% load cobrastyle %}<link rel="preload" href="{% cobrastyle_url "page.css" %}">'
+        '{% cobrastyle_url "base.css" as later %}[{{ later }}]'
+    )
+    with override_settings(**project_settings(project)):
+        html = render("url.html")
+
+    assert '<link rel="preload" href="/cobrastyle/page.css">' in html
+    assert "[/cobrastyle/base.css]" in html
+
+
+def test_cobrastyle_url_rejects_an_unknown_module(project):
+    (project / "templates" / "url.html").write_text('{% load cobrastyle %}{% cobrastyle_url "nope.css" %}')
+    with override_settings(**project_settings(project)), pytest.raises(TemplateSyntaxError, match="nope"):
+        render("url.html")
 
 
 def test_dynamic_path_is_rejected(project):
@@ -161,6 +252,49 @@ def test_prod_render_from_manifest(project):
         get_runtime().pages.clear()
         html = render("index.html")
         assert manifest.modules["page.css"].url in html
+
+
+def test_prod_links_an_included_partials_stylesheet(project):
+    (project / "styles" / "tip.css").write_text(".tip { color: blue; }")
+    (project / "templates" / "_tip.html").write_text(
+        '{% load cobrastyle %}{% cobrastyle "tip.css" as styles %}<aside class="{{ styles.tip }}"></aside>'
+    )
+    (project / "templates" / "tips.html").write_text(
+        '{% load cobrastyle %}<head>{% cobrastyle_links %}</head>{% include "_tip.html" %}'
+    )
+    with override_settings(**project_settings(project)):
+        call_command("cobrastyle_build", verbosity=0)
+    manifest = Manifest.load(project / "cobrastyle_static" / "cobrastyle" / "manifest.json")
+
+    assert manifest.pages["tips.html"] == ["tip.css"]
+    with override_settings(**project_settings(project, debug=False)):
+        assert manifest.modules["tip.css"].url in render("tips.html")
+
+
+def test_build_covers_every_dtl_backend(project):
+    """A second DjangoTemplates backend (for email, say) is built too, not silently dropped."""
+    (project / "styles" / "mail.css").write_text(".body { color: black; }")
+    (project / "templates_mail").mkdir()
+    (project / "templates_mail" / "welcome.html").write_text(
+        '{% load cobrastyle %}{% cobrastyle "mail.css" as styles %}<p class="{{ styles.body }}"></p>'
+    )
+    settings = project_settings(project)
+    settings["TEMPLATES"] = [
+        *settings["TEMPLATES"],
+        {
+            "BACKEND": "django.template.backends.django.DjangoTemplates",
+            "NAME": "mail",
+            "DIRS": [str(project / "templates_mail")],
+            "APP_DIRS": False,
+            "OPTIONS": {},
+        },
+    ]
+    with override_settings(**settings):
+        call_command("cobrastyle_build", verbosity=0)
+
+    manifest = Manifest.load(project / "cobrastyle_static" / "cobrastyle" / "manifest.json")
+    assert manifest.pages["welcome.html"] == ["mail.css"]
+    assert "mail.css" in manifest.modules
 
 
 def test_prod_urls_resolve_through_hashed_storage(project):
@@ -489,7 +623,7 @@ def test_mixed_engines_conflicting_template_names_fail(project):
         },
     ]
 
-    with override_settings(**settings), pytest.raises(CommandError, match="both the Jinja2 and DTL"):
+    with override_settings(**settings), pytest.raises(CommandError, match="more than one template backend"):
         call_command("cobrastyle_build", verbosity=0)
 
 

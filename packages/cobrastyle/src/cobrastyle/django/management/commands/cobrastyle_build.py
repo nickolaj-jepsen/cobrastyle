@@ -12,6 +12,19 @@ from cobrastyle.errors import BuildError
 from cobrastyle.manager import Stylesheet
 
 
+def _merge(pages: dict[str, list[str]], collected: dict[str, list[str]]) -> None:
+    """Fold one backend's pages into the build's; CommandError on a name two backends disagree about."""
+    conflicts = sorted(name for name, modules in collected.items() if pages.get(name, modules) != modules)
+    if conflicts:
+        # manifest.pages is keyed by relative template name — a name two backends
+        # resolve to different stylesheets cannot be represented
+        raise CommandError(
+            f"Template name(s) {', '.join(conflicts)} exist in more than one template backend with "
+            "different stylesheets; rename one or scope the build with --glob."
+        )
+    pages.update(collected)
+
+
 class Command(BaseCommand):
     help = "Compile every template's stylesheets into hashed CSS files plus a manifest.json."
 
@@ -36,7 +49,7 @@ class Command(BaseCommand):
         parser.add_argument("--no-minify", action="store_true", help="Emit readable CSS instead of minified.")
 
     def handle(self, *args: Any, **options: Any) -> None:
-        jinja_env, dtl_backend = find_backends()
+        jinja_envs, dtl_backends = find_backends()
         config = app_config()
         out = Path(options["out"]) if options["out"] else output_dir(config)
         static_url = settings.STATIC_URL or "/static/"
@@ -58,7 +71,7 @@ class Command(BaseCommand):
         pages: dict[str, list[str]] = {}
         stylesheets: dict[str, Stylesheet] = {}
         try:
-            if jinja_env is not None:
+            for jinja_env in jinja_envs:
                 build_env = dev_overlay(jinja_env, config, resolver)
                 collected = collect_jinja2(
                     build_env,
@@ -67,27 +80,18 @@ class Command(BaseCommand):
                     extra_templates=tuple(options["extra_templates"] or ()),
                     minify=minify,
                 )
-                pages.update(collected.pages)
+                _merge(pages, collected.pages)
                 stylesheets.update({sheet.path: sheet for sheet in collected.stylesheets})
 
-            if dtl_backend is not None:
+            if dtl_backends:
                 from cobrastyle.django.build import collect_dtl
 
-                collected = collect_dtl(
-                    dtl_backend, resolver, common_options(config), globs=globs, strict=strict, minify=minify
-                )
-                # manifest.pages is keyed by relative template name — a name in both
-                # engines with different stylesheets cannot be represented
-                conflicts = sorted(
-                    name for name, modules in collected.pages.items() if pages.get(name, modules) != modules
-                )
-                if conflicts:
-                    raise CommandError(
-                        f"Template name(s) {', '.join(conflicts)} exist in both the Jinja2 and DTL "
-                        "backends with different stylesheets; rename one or scope the build with --glob."
+                for dtl_backend in dtl_backends:
+                    collected = collect_dtl(
+                        dtl_backend, resolver, common_options(config), globs=globs, strict=strict, minify=minify
                     )
-                pages.update(collected.pages)
-                stylesheets.update({sheet.path: sheet for sheet in collected.stylesheets})
+                    _merge(pages, collected.pages)
+                    stylesheets.update({sheet.path: sheet for sheet in collected.stylesheets})
 
             manifest = emit(
                 list(stylesheets.values()),

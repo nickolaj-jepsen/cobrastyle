@@ -177,7 +177,8 @@ def test_django_example(copy_example, monkeypatch):
             html = client.get("/").content.decode()  # Jinja2 backend
             assert css_hrefs(html) == ["/cobrastyle/base.css", "/cobrastyle/index.css"]
             about = client.get("/about/").content.decode()  # DTL backend
-            assert css_hrefs(about) == ["/cobrastyle/base.css", "/cobrastyle/about.css"]
+            # footnote.css comes from an {% include %}d partial the page never names
+            assert css_hrefs(about) == ["/cobrastyle/base.css", "/cobrastyle/about.css", "/cobrastyle/footnote.css"]
             assert client.get("/cobrastyle/index.css").status_code == 200
             assert client.get("/cobrastyle/img/dots.svg").status_code == 200
             about_css = client.get("/cobrastyle/about.css").content.decode()
@@ -200,7 +201,9 @@ def test_django_example(copy_example, monkeypatch):
         with override_settings(**{**overrides, "DEBUG": False}):
             client = Client()
             assert manifest.modules["index.css"].url in client.get("/").content.decode()
-            assert manifest.modules["about.css"].url in client.get("/about/").content.decode()
+            about = client.get("/about/").content.decode()
+            assert manifest.modules["about.css"].url in about
+            assert manifest.modules["footnote.css"].url in about
             assert client.get("/cobrastyle/index.css").status_code == 404  # dev serving is DEBUG only
 
             # Fragments work from the manifest too: hashed URL, no hot-reload script

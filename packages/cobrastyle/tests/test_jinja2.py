@@ -1,15 +1,22 @@
+import re
 from textwrap import dedent
 
 import pytest
 from jinja2 import DictLoader, Environment, TemplateSyntaxError
 
 from cobrastyle import InMemoryResolver
+from cobrastyle.errors import StylesheetNotFoundError
 from cobrastyle.fragments import fragment_links_html
 from cobrastyle.jinja2 import CobrastyleExtension, configure
 
 
 def _clean(template: str) -> str:
     return "\n".join(line for line in dedent(template).splitlines() if line.strip()).strip()
+
+
+def _hrefs(rendered: str) -> list[str]:
+    """The stylesheet URLs a render linked, in order."""
+    return re.findall(r'<link rel="stylesheet" href="([^"]+)"', rendered)
 
 
 def make_environment(
@@ -275,10 +282,10 @@ def test_links_with_inherited_head():
     """)
 
 
-def test_include_styles_are_not_seen_by_links():
-    """Includes render in their own context: their stylesheets never reach the page's links()."""
+def test_include_styles_reach_links():
+    """An included partial's stylesheet is linked by the page's <head>, which never names it."""
     templates = {
-        "page.html": '{% include "_partial.html" %}{{ cobrastyle.links() }}',
+        "page.html": '{{ cobrastyle.links() }}{% include "_partial.html" %}',
         "_partial.html": '{% cobrastyle styles = "partial.css" %}<span class="{{ styles.x }}"></span>',
     }
     jinja = make_environment({"partial.css": ".x { color: red; }"}, templates)
@@ -286,7 +293,62 @@ def test_include_styles_are_not_seen_by_links():
     result = jinja.get_template("page.html").render()
 
     assert 'class="x"' in result
-    assert "partial.css" not in result  # documented limitation; see the README caveat
+    assert '<link rel="stylesheet" href="partial.css" />' in result
+
+
+def test_links_cover_the_whole_static_graph_layouts_first():
+    templates = {
+        "base.html": '{% cobrastyle base = "base.css" %}{{ cobrastyle.links() }}{% block body %}{% endblock %}',
+        "mid.html": '{% extends "base.html" %}{% cobrastyle mid = "mid.css" %}',
+        "page.html": (
+            '{% extends "mid.html" %}{% cobrastyle page = "page.css" %}'
+            '{% block body %}{% include "_partial.html" %}{% endblock %}'
+        ),
+        "_partial.html": '{% cobrastyle partial = "partial.css" %}',
+    }
+    jinja = make_environment(
+        dict.fromkeys(("base.css", "mid.css", "page.css", "partial.css"), ".x { color: red; }"), templates
+    )
+
+    result = jinja.get_template("page.html").render()
+
+    assert _hrefs(result) == ["base.css", "mid.css", "page.css", "partial.css"]
+
+
+def test_a_page_with_no_tags_of_its_own_still_links_what_it_includes():
+    templates = {
+        "page.html": '{{ cobrastyle.links() }}{% include "_partial.html" %}',
+        "_partial.html": '{% cobrastyle styles = "partial.css" %}',
+    }
+    jinja = make_environment({"partial.css": ".x { color: red; }"}, templates)
+
+    assert _hrefs(jinja.get_template("page.html").render()) == ["partial.css"]
+
+
+def test_a_dynamically_included_partial_is_not_seen():
+    """Only statically named templates join the graph; a variable include needs an explicit path."""
+    templates = {
+        "page.html": "{{ cobrastyle.links() }}{% include partial %}",
+        "_partial.html": '{% cobrastyle styles = "partial.css" %}',
+    }
+    jinja = make_environment({"partial.css": ".x { color: red; }"}, templates)
+
+    assert _hrefs(jinja.get_template("page.html").render(partial="_partial.html")) == []
+
+
+def test_stylesheet_url():
+    jinja = make_environment({"print.css": ".p { color: red; }"})
+    template = jinja.from_string('<link rel="preload" href="{{ cobrastyle.stylesheet_url("print.css") }}">')
+
+    assert template.render() == '<link rel="preload" href="print.css">'
+
+
+def test_stylesheet_url_rejects_an_unknown_module():
+    jinja = make_environment({"print.css": ".p { color: red; }"})
+    template = jinja.from_string('{{ cobrastyle.stylesheet_url("nope.css") }}')
+
+    with pytest.raises(StylesheetNotFoundError, match="nope"):
+        template.render()
 
 
 def test_dynamic_path_is_rejected():

@@ -30,14 +30,14 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args: Any, **options: Any) -> None:
-        jinja_env, dtl_backend = find_backends()
+        jinja_envs, dtl_backends = find_backends()
         config = app_config()
         globs = tuple(options["globs"] or DEFAULT_GLOBS)
         strict = options["strict"]
         resolver = dev_resolver(config)
         collector = UsageCollector()
         try:
-            if jinja_env is not None:
+            for jinja_env in jinja_envs:
                 check_env = dev_overlay(jinja_env, config, resolver)
                 check_jinja2(
                     check_env,
@@ -47,10 +47,11 @@ class Command(BaseCommand):
                     extra_templates=tuple(options["extra_templates"] or ()),
                 )
 
-            if dtl_backend is not None:
+            if dtl_backends:
                 from cobrastyle.django.check import check_dtl
 
-                check_dtl(dtl_backend, resolver, common_options(config), collector, globs=globs, strict=strict)
+                for dtl_backend in dtl_backends:
+                    check_dtl(dtl_backend, resolver, common_options(config), collector, globs=globs, strict=strict)
         except BuildError as exc:
             raise CommandError(str(exc)) from exc
 

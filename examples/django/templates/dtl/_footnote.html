@@ -1,0 +1,6 @@
+{% load cobrastyle %}{% cobrastyle "footnote.css" as styles %}
+<p class="{{ styles.footnote }}">
+  <span class="{{ styles.marker }}">[1]</span> This partial has its own stylesheet, and the
+  page that includes it never mentions it — <code>{% templatetag openblock %} cobrastyle_links {% templatetag closeblock %}</code>
+  walks the template graph, so a partial's CSS reaches the <code>&lt;head&gt;</code> anyway.
+</p>

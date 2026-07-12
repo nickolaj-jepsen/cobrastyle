@@ -16,6 +16,10 @@ without a reload. The About page's "Load a tip over HTMX" button fetches a DTL f
 whose stylesheet the page never linked; `{% cobrastyle_fragment_links %}` adds it
 out-of-band before the swap.
 
+Its footnote comes from an `{% include %}`d partial with a stylesheet of its own. Nothing
+in the page or the layout names `footnote.css` — `{% cobrastyle_links %}` walks the
+template graph, so a partial's CSS reaches the `<head>` anyway.
+
 ## Prod mode
 
 ```sh

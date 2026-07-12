@@ -61,15 +61,18 @@ def collect_dtl(
     """Walk a DjangoTemplates backend's templates; return the pages, compiled stylesheets, and their resolver.
 
     Compiling a DTL template fires ``{% cobrastyle %}`` at parse time; a
-    temporary dev runtime with dependency analysis collects the modules.
+    temporary dev runtime with dependency analysis collects the modules. Each
+    page's entry is the closure over the templates it extends and includes —
+    the same set ``{% cobrastyle_links %}`` renders.
     """
     manager = CobrastyleManager(resolver, **build_options(manager_options, minify=minify))
     runtime = DTLRuntime(manager=manager)
+    pages: dict[str, list[str]] = {}
     with throwaway_runtime(backend, runtime):
-        for _ in parse_templates(backend, globs, strict):
-            pass
+        for name, template in parse_templates(backend, globs, strict):
+            if modules := runtime.template_modules(template.template):
+                pages[name] = modules
 
-    pages = {page.template_name: page.paths for page in runtime.pages.values() if page.paths and page.template_name}
     return CollectedTemplates(pages, manager.stylesheets, resolver)
 
 

@@ -4,7 +4,7 @@ import hashlib
 import json
 import threading
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Self, TypedDict, Unpack, cast, overload
+from typing import TYPE_CHECKING, Any, NamedTuple, Self, TypedDict, Unpack, cast, overload
 
 from jinja2 import Environment, TemplateSyntaxError, nodes, pass_context
 from jinja2.ext import Extension
@@ -20,7 +20,7 @@ from cobrastyle.resolvers import FileResolver, FileSystemResolver, HasUrlPrefix
 from cobrastyle.source import StyleSource
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterable
 
     from cobrastyle.manager import CobrastyleManager
 
@@ -63,40 +63,85 @@ def extended(environment: Environment) -> ExtendedEnvironment:
     return cast(ExtendedEnvironment, environment)
 
 
+class TemplateRefs(NamedTuple):
+    """The templates a source statically pulls in, split by how their modules cascade.
+
+    ``inherited`` (``{% extends %}``) supplies the layout, whose stylesheets
+    link before the template's own; ``included`` (``{% include %}``,
+    ``{% import %}``, ``{% from %}``) supplies partials, whose stylesheets link
+    after. Only constant names — a dynamic ``{% include page %}`` resolves to
+    nothing here and its modules must be named in ``links()``.
+    """
+
+    inherited: tuple[str, ...] = ()
+    included: tuple[str, ...] = ()
+
+
+_NO_REFS = TemplateRefs()
+_INCLUDING_TAGS = frozenset({"include", "import", "from"})
+# The substrings any tag we scan for must contain — a source with none of them
+# cannot reference cobrastyle or another template, so it never reaches the lexer.
+# ({% from "x" import y %} always carries "import".)
+_SCAN_HINTS = ("cobrastyle", "extends", "include", "import")
+
+
+def _extend(modules: list[str], paths: Iterable[str]) -> None:
+    """Append the paths ``modules`` does not already carry, preserving order."""
+    for path in paths:
+        if path not in modules:
+            modules.append(path)
+
+
 class _CompileState(threading.local):
     """The template currently being compiled, per thread.
 
     ``page_paths`` collects the template's module paths; the last of the
-    ``pending_tags`` counted by preprocess() publishes it into the extension's
-    page registry as one finished list — deferred so a concurrent render never
-    observes a half-built (or emptied) entry for a page it is rendering.
+    ``pending_tags`` counted by preprocess() publishes it (with ``page_refs``)
+    into the extension's page registry as one finished entry — deferred so a
+    concurrent render never observes a half-built (or emptied) entry for a page
+    it is rendering.
     """
 
     def __init__(self) -> None:
         self.page_id: str | None = None
         self.page_paths: list[str] | None = None
+        self.page_refs: TemplateRefs = _NO_REFS
         self.pending_tags = 0
 
 
-def _count_cobrastyle_tags(environment: Environment, source: str, name: str | None) -> int | None:
-    """The number of ``cobrastyle`` tags the parser will fire for ``source``.
+def _scan_source(environment: Environment, source: str, name: str | None) -> tuple[int | None, TemplateRefs]:
+    """The number of ``cobrastyle`` tags the parser will fire for ``source``, and the templates it refers to.
 
     Lexer-exact, unlike a regex over the raw text: line-statement tags count,
-    while tags inside comments or ``{% raw %}`` don't. None when the source
-    doesn't lex — the compile is about to fail anyway.
+    while tags inside comments or ``{% raw %}`` don't. The tag count is None
+    when the source doesn't lex — the compile is about to fail anyway.
     """
     count = 0
-    previous = ""
+    inherited: list[str] = []
+    included: list[str] = []
     try:
-        for _, token_type, value in environment.lexer.tokeniter(source, name):
-            if token_type == "whitespace":
-                continue  # tokeniter is pre-normalization: whitespace sits between begin and name
-            if token_type == "name" and value == "cobrastyle" and previous in ("block_begin", "linestatement_begin"):
-                count += 1
-            previous = token_type
+        tokens = list(environment.lexer.tokenize(source, name))
     except TemplateSyntaxError:
-        return None
-    return count
+        return None, _NO_REFS
+    for index, token in enumerate(tokens[:-1]):
+        if token.type != "block_begin":
+            continue
+        tag = tokens[index + 1]
+        if tag.type != "name":
+            continue
+        if tag.value == "cobrastyle":
+            count += 1
+            continue
+        if tag.value == "extends":
+            refs = inherited
+        elif tag.value in _INCLUDING_TAGS:
+            refs = included
+        else:
+            continue
+        referenced = tokens[index + 2] if index + 2 < len(tokens) else None
+        if referenced is not None and referenced.type == "string" and referenced.value not in refs:
+            refs.append(referenced.value)
+    return count, TemplateRefs(tuple(inherited), tuple(included))
 
 
 @overload
@@ -213,6 +258,8 @@ def configure(
     if extension is not None:
         extension._manager = None
         extension._source = None
+        # The new mode resolves pages differently (manifest vs. parse-time registry)
+        extension._generation += 1
 
 
 def configure_dev(
@@ -277,8 +324,15 @@ class CobrastyleExtension(Extension):
         self._source: StyleSource | None = None
         # Parse-time hook observing (assign target node, module path, class map)
         self._binding_recorder: Callable[[nodes.Node, str, dict[str, str]], None] | None = None
-        # Module paths statically imported by each compiled template
+        # Module paths statically imported by each compiled template, and the
+        # templates it pulls in — page_modules() closes over both
         self._pages: dict[str, list[str]] = {}
+        self._refs: dict[str, TemplateRefs] = {}
+        # That closure, memoized: links() asks for it on every render of every
+        # page. Stamped with the generation it was computed under, which every
+        # compile bumps — a dev edit recompiles, so stale entries never survive.
+        self._closures: dict[str, tuple[int, tuple[str, ...]]] = {}
+        self._generation = 0
         self._compiling = _CompileState()
 
     @classmethod
@@ -314,26 +368,33 @@ class CobrastyleExtension(Extension):
         # Either cache layer can skip preprocess/parse — never let stale state leak into the next compile
         self._compiling.page_id = None
         self._compiling.page_paths = None
-        if "cobrastyle" not in source:
+        self._compiling.page_refs = _NO_REFS
+        if not any(hint in source for hint in _SCAN_HINTS):
             return source
         # Source-hashed, not a counter, so recompiling the same string (from_string
         # in a loop) reuses one registry entry instead of growing _pages forever
         page_id = name if name is not None else f"<anonymous-{hashlib.sha256(source.encode()).hexdigest()[:12]}>"
         environment = self.environment
-        tags = _count_cobrastyle_tags(environment, source, name)
-        if tags == 0:
-            # No tag ever fires (the substring hit was e.g. {{ cobrastyle.links() }}):
-            # [] is the final value, and publishing now keeps tag-removal edits fresh.
-            # Nothing to track, so skip the injection a tag-free layout would
-            # otherwise pay for on every render.
-            self._pages[page_id] = []
+        tags, refs = _scan_source(environment, source, name)
+        if tags == 0 and refs == _NO_REFS:
+            # No tag ever fires and no template is pulled in (the substring hit was
+            # e.g. {{ cobrastyle.links() }}): [] is the final value, and publishing
+            # now keeps tag-removal edits fresh. Nothing to track, so skip the
+            # injection a tag-free layout would otherwise pay for on every render.
+            self._publish(page_id, [], refs)
             return source
-        # Deferred: the last tag's parse() swaps the finished list in atomically,
-        # so a render racing this compile sees the previous complete entry, never
-        # an emptied or half-built one. A failed compile leaves the old entry.
-        self._compiling.page_id = page_id
-        self._compiling.page_paths = []
-        self._compiling.pending_tags = tags if tags is not None else -1
+        if tags == 0:
+            # Nothing to defer — no parse() will fire — but the refs still matter:
+            # a page with no tags of its own inherits and includes stylesheets.
+            self._publish(page_id, [], refs)
+        else:
+            # Deferred: the last tag's parse() swaps the finished entry in atomically,
+            # so a render racing this compile sees the previous complete entry, never
+            # an emptied or half-built one. A failed compile leaves the old entry.
+            self._compiling.page_id = page_id
+            self._compiling.page_paths = []
+            self._compiling.page_refs = refs
+            self._compiling.pending_tags = tags if tags is not None else -1
         # Prepended without a newline so template line numbers stay intact. The
         # top-level set runs at render start — before any parent template renders —
         # which lets {{ cobrastyle.links() }} in an inherited <head> see this
@@ -372,7 +433,7 @@ class CobrastyleExtension(Extension):
                     page.append(page_path)
             self._compiling.pending_tags -= 1
             if self._compiling.pending_tags == 0:
-                self._pages[page_id] = page
+                self._publish(page_id, page, self._compiling.page_refs)
 
         return nodes.Assign(target, nodes.Const(classes)).set_lineno(lineno)
 
@@ -408,16 +469,70 @@ class CobrastyleExtension(Extension):
         return self.source.url_for(path)
 
     def page_modules(self, page_id: str) -> list[str]:
-        """Return the module paths statically imported by the template ``page_id``.
+        """Return every module path the template ``page_id`` needs linked.
 
-        Prefers this process's parse-time collection; falls back to the
-        manifest, which is what keeps ``links()`` correct in workers that
-        loaded the template from a cache and never compiled it.
+        The transitive closure over the templates it statically pulls in, so
+        an ``{% include %}``d partial's stylesheet reaches the ``<head>`` that
+        never mentions it. Ordered layouts first, then the template's own
+        modules, then its partials' — a module re-declaring a rule its layout
+        set wins the cascade.
+
+        Each template's own contribution prefers this process's parse-time
+        collection; it falls back to the manifest, which is what keeps
+        ``links()`` correct in workers that loaded the template from a cache
+        and never compiled it.
         """
-        paths = self._pages.get(page_id)
-        if paths is None:
-            paths = self.source.manifest_pages(page_id)
-        return list(paths or ())
+        cached = self._closures.get(page_id)
+        if cached is not None and cached[0] == self._generation:
+            return list(cached[1])
+        # Sampled before the walk, which compiles templates it has not seen and so
+        # bumps the generation itself: that entry is stale on arrival and the next
+        # render recomputes it once, over a registry that has stopped moving.
+        generation = self._generation
+        modules: list[str] = []
+        self._collect_modules(page_id, modules, set())
+        self._closures[page_id] = (generation, tuple(modules))
+        return modules
+
+    def _publish(self, page_id: str, modules: list[str], refs: TemplateRefs) -> None:
+        """Register what a just-compiled template imports, invalidating the memoized closures."""
+        self._pages[page_id] = modules
+        self._refs[page_id] = refs
+        self._generation += 1
+
+    def _collect_modules(self, page_id: str, modules: list[str], seen: set[str]) -> None:
+        if page_id in seen:
+            return
+        seen.add(page_id)
+        own = self._pages.get(page_id)
+        if own is None:
+            # Not compiled in this process. A manifest entry is already the
+            # closure, so it ends the walk; otherwise compile the template to
+            # find out what it needs (dev, and any template the manifest has no
+            # modules for).
+            baked = self.source.manifest_pages(page_id)
+            if baked is not None:
+                _extend(modules, baked)
+                return
+            if not self._load_template(page_id):
+                return
+            own = self._pages.get(page_id, [])
+        refs = self._refs.get(page_id, _NO_REFS)
+        for parent in refs.inherited:
+            self._collect_modules(parent, modules, seen)
+        _extend(modules, own)
+        for partial in refs.included:
+            self._collect_modules(partial, modules, seen)
+
+    def _load_template(self, name: str) -> bool:
+        """Compile ``name`` so its modules and refs land in the registry; False when it cannot be loaded."""
+        try:
+            self.environment.get_template(name)
+        except Exception:
+            # A referenced template that does not exist or does not compile is
+            # the compiler's problem to report when it renders, not links()'.
+            return False
+        return name in self._pages
 
     @pass_context
     def _enter_page(self, context: Context, page_id: str) -> str:
@@ -437,6 +552,15 @@ class CobrastyleRuntime:
 
     def __init__(self, extension: CobrastyleExtension):
         self._extension = extension
+
+    def stylesheet_url(self, path: str) -> str:
+        """The URL the module at ``path`` is served from.
+
+        For markup cobrastyle does not write itself — a ``<link rel="preload">``,
+        say. A module named only here is not linked by :meth:`links`, which
+        links what the render's templates import.
+        """
+        return self._extension.stylesheet_url(normalize_path(path))
 
     @pass_context
     def links(self, context: Context) -> Markup:

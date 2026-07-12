@@ -8,8 +8,7 @@ from django.template.defaulttags import ForNode, WithNode
 from cobrastyle.build import DEFAULT_GLOBS
 from cobrastyle.check import Reference, TemplateScan, UsageCollector
 from cobrastyle.django.build import parse_templates, throwaway_runtime
-from cobrastyle.django.runtime import DTLRuntime
-from cobrastyle.django.templatetags.cobrastyle import CobrastyleNode
+from cobrastyle.django.runtime import CobrastyleNode, DTLRuntime
 from cobrastyle.manager import CobrastyleManager
 
 if TYPE_CHECKING:
@@ -52,7 +51,8 @@ def _scan_nodelist(template_name: str, nodelist: NodeList, collector: UsageColle
         lineno = getattr(getattr(node, "token", None), "lineno", None)
         if isinstance(node, CobrastyleNode):
             collector.register(node.path, node.classes)
-            scan.bindings.append((node.variable_name, node.path))
+            if node.variable_name is not None:
+                scan.bindings.append((node.variable_name, node.path))
             continue
         if isinstance(node, ForNode):
             scan.stored.update(node.loopvars)
