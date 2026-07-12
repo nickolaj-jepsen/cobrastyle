@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from typing import NamedTuple, Protocol, runtime_checkable
 
@@ -57,11 +58,20 @@ class FileSystemResolver:
     def __init__(self, root: str | Path, url_prefix: str = "/cobrastyle/"):
         self.root = Path(root).resolve()
         self.url_prefix = url_prefix if url_prefix.endswith("/") else url_prefix + "/"
+        self._resolved_cache: dict[str, Path] = {}
 
     def _resolved(self, path: str) -> Path:
+        # Resolution (symlink walk + containment check) dominates dev serving, so hits
+        # memoize. Only symlink-free resolutions of existing files: symlinked paths must
+        # re-resolve (a retarget could escape the root), and uncached misses keep URL
+        # probing from growing the dict.
+        if (cached := self._resolved_cache.get(path)) is not None:
+            return cached
         resolved = (self.root / path).resolve()
         if not resolved.is_relative_to(self.root):
             raise StylesheetPathError(f"Stylesheet path escapes the resolver root: {path!r}")
+        if resolved == self.root / path and resolved.exists():
+            self._resolved_cache[path] = resolved
         return resolved
 
     def resolve(self, path: str) -> ResolvedFile:
@@ -73,7 +83,8 @@ class FileSystemResolver:
         )
 
     def mtime(self, path: str) -> float | None:
-        return self._resolved(path).stat().st_mtime
+        # os.stat, not Path.stat: freshness polls call this per dependency per tick
+        return os.stat(self._resolved(path)).st_mtime
 
     def read_bytes(self, path: str) -> bytes:
         return self._resolved(path).read_bytes()

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import asyncio
-import base64
 import hashlib
 import html
 import json
@@ -115,13 +113,23 @@ def stylesheet_links_html(urls: Iterable[str], *, hot_reload_prefix: str | None 
     return links
 
 
-def _freshness_token(manager: CobrastyleManager, stylesheet: Stylesheet) -> tuple[object, ...]:
+# Not None: that's a real token (resolvers without freshness), and "missing" marks a vanished file.
+_UNPOLLED = object()
+
+
+def _freshness_token(
+    manager: CobrastyleManager, stylesheet: Stylesheet, mtimes: dict[str, object]
+) -> tuple[object, ...]:
     tokens: list[object] = []
     for dep, _ in stylesheet.dep_mtimes:
-        try:
-            tokens.append(manager.resolver.mtime(dep))
-        except (KeyError, OSError):
-            tokens.append("missing")
+        token = mtimes.get(dep, _UNPOLLED)
+        if token is _UNPOLLED:
+            try:
+                token = manager.resolver.mtime(dep)
+            except (KeyError, OSError):
+                token = "missing"
+            mtimes[dep] = token
+        tokens.append(token)
     return tuple(tokens)
 
 
@@ -133,8 +141,10 @@ def poll_changes(manager: CobrastyleManager, seen: dict[str, tuple[object, ...]]
     new, not changed.
     """
     changed = []
+    # Dependencies shared across modules (a common reset) stat once per poll, not per stylesheet
+    mtimes: dict[str, object] = {}
     for stylesheet in manager.stylesheets:
-        token = _freshness_token(manager, stylesheet)
+        token = _freshness_token(manager, stylesheet, mtimes)
         previous = seen.get(stylesheet.path)
         seen[stylesheet.path] = token
         if previous is not None and previous != token:
@@ -240,8 +250,8 @@ def serve(
 class Negotiated(NamedTuple):
     """A resolved resource whose ETag is known before its body is built.
 
-    ``body`` runs only on an ETag miss, so 304 revalidations skip the
-    source-map encoding (CSS) or the file read (raw assets) entirely.
+    ``body`` runs only on an ETag miss, so 304 revalidations of raw assets
+    skip the file read entirely (compiled CSS bodies are prebuilt anyway).
     """
 
     etag: str
@@ -269,15 +279,7 @@ def _negotiate_css(manager: CobrastyleManager, path: str) -> Negotiated | None:
         if exc.path == path:
             return None
         raise  # a missing @import or composes dependency is a compile failure, not a 404
-
-    def body() -> bytes:
-        code = stylesheet.code
-        if stylesheet.map is not None:
-            encoded = base64.b64encode(stylesheet.map.encode()).decode()
-            code = f"{code}\n/*# sourceMappingURL=data:application/json;base64,{encoded} */"
-        return code.encode()
-
-    return Negotiated(_etag(stylesheet), CONTENT_TYPE, body)
+    return Negotiated(stylesheet.etag, CONTENT_TYPE, lambda: stylesheet.body)
 
 
 def _negotiate_raw(manager: CobrastyleManager, path: str) -> Negotiated | None:
@@ -368,13 +370,6 @@ def _etag_matches(if_none_match: str | None, etag: str) -> bool:
     return any(candidate.strip().removeprefix("W/") == opaque for candidate in if_none_match.split(","))
 
 
-def _etag(stylesheet: Stylesheet) -> str:
-    # Content-hashed, never mtime-based: the entry's mtime misses edits to
-    # @imported files, and same-length edits would keep the length stable too.
-    digest = hashlib.sha256(stylesheet.code.encode()).hexdigest()[:16]
-    return f'W/"{digest}"'
-
-
 class CobrastyleWSGIMiddleware:
     """WSGI middleware serving compiled CSS under ``url_prefix``; everything else falls through."""
 
@@ -440,6 +435,9 @@ class CobrastyleASGIApp:
         await _respond(send, result.status, headers, result.body)
 
     async def _serve_events(self, receive: Receive, send: Send) -> None:
+        # Local import: asyncio costs ~17ms and WSGI-only apps import this module too
+        import asyncio
+
         headers = [(name.lower().encode(), value.encode()) for name, value in SSE_HEADERS]
         await send({"type": "http.response.start", "status": 200, "headers": headers})
         seen: dict[str, tuple[object, ...]] = {}

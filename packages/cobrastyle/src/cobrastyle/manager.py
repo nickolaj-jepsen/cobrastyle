@@ -1,3 +1,5 @@
+import base64
+import hashlib
 import posixpath
 import re
 import threading
@@ -32,6 +34,11 @@ class Stylesheet(NamedTuple):
     map: str | None = None
     # Freshness snapshot: (path, mtime at compile) for every file the compile depended on
     dep_mtimes: tuple[tuple[str, float | None], ...] = ()
+    # Dev-serving payload, source map inlined: precomputed so a request is a cache lookup
+    body: bytes = b""
+    # Weak ETag over the body. Content-hashed, never mtime-based: the entry's mtime
+    # misses edits to @imported files, and same-length edits keep the length stable too.
+    etag: str = ""
 
 
 class _BundleProvider:
@@ -165,6 +172,11 @@ class CobrastyleManager:
         dep_mtimes = {file: resolved.mtime if file == path else self.resolver.mtime(file) for file in result.files}
         for composed in composes:
             dep_mtimes.setdefault(composed, self.resolver.mtime(composed))
+        served = result.code
+        if result.map is not None:
+            encoded = base64.b64encode(result.map.encode()).decode()
+            served = f"{served}\n/*# sourceMappingURL=data:application/json;base64,{encoded} */"
+        body = served.encode()
         return Stylesheet(
             path=path,
             url=resolved.url,
@@ -175,6 +187,8 @@ class CobrastyleManager:
             composes=tuple(composes),
             map=result.map,
             dep_mtimes=tuple(sorted(dep_mtimes.items())),
+            body=body,
+            etag=f'W/"{hashlib.sha256(body).hexdigest()[:16]}"',
         )
 
     def get(self, path: str) -> Stylesheet | None:

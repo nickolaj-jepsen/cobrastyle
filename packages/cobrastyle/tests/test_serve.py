@@ -1,6 +1,8 @@
 import asyncio
 import logging
 import os
+import subprocess
+import sys
 from typing import Any
 
 import pytest
@@ -513,3 +515,33 @@ def test_asgi_app_streams_events_until_disconnect():
     assert start["status"] == 200
     assert dict(start["headers"])[b"content-type"] == b"text/event-stream"
     assert messages[1] == {"type": "http.response.body", "body": b": cobrastyle\n\n", "more_body": True}
+
+
+def test_poll_changes_stats_shared_dependencies_once_per_poll(tmp_path, monkeypatch):
+    from cobrastyle.serve import poll_changes
+
+    (tmp_path / "shared.css").write_text(":root { --x: red; }")
+    (tmp_path / "a.css").write_text('@import "./shared.css";\n.a { color: red; }')
+    (tmp_path / "b.css").write_text('@import "./shared.css";\n.b { color: red; }')
+    manager = CobrastyleManager(FileSystemResolver(tmp_path))
+    manager.import_module("a.css")
+    manager.import_module("b.css")
+
+    stats: list[str] = []
+    resolver_mtime = manager.resolver.mtime
+
+    def counting_mtime(path: str) -> float | None:
+        stats.append(path)
+        return resolver_mtime(path)
+
+    monkeypatch.setattr(manager.resolver, "mtime", counting_mtime)
+
+    poll_changes(manager, {})
+
+    assert sorted(stats) == ["a.css", "b.css", "shared.css"]
+
+
+def test_importing_serve_skips_asyncio():
+    """WSGI-only processes import this module; asyncio (ASGI-app-only) must not ride along."""
+    probe = "import sys; import cobrastyle.serve; sys.exit('asyncio' in sys.modules)"
+    subprocess.run([sys.executable, "-c", probe], check=True)
