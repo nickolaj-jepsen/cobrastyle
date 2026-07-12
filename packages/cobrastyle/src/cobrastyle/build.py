@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, NamedTuple
 
 from jinja2 import Environment
 
+from cobrastyle.errors import BuildError
 from cobrastyle.jinja2 import CobrastyleExtension, extended
 from cobrastyle.manifest import AssetEntry, Manifest, ModuleEntry
 from cobrastyle.paths import normalize_path
@@ -29,10 +30,6 @@ BUILD_MODULE_PATTERN = "[hash]_[local]"
 
 # scheme:, protocol-relative, or same-document fragment — passed through untouched
 _EXTERNAL_URL = re.compile(r"^(?:[a-z][a-z0-9+.-]*:|//|#)", re.IGNORECASE)
-
-
-class BuildError(Exception):
-    """The build cannot produce a complete, correct manifest."""
 
 
 class CollectedTemplates(NamedTuple):

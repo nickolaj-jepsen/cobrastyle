@@ -1,10 +1,11 @@
 import asyncio
+import logging
 import os
 
 import pytest
 
 from cobrastyle import CobrastyleManager, FileSystemResolver, InMemoryResolver
-from cobrastyle.serve import CobrastyleASGIApp, CobrastyleWSGIMiddleware, get_css, get_resource, serve
+from cobrastyle.serve import CobrastyleASGIApp, CobrastyleWSGIMiddleware, error_css, get_css, get_resource, serve
 
 
 def test_get_css_compiles():
@@ -36,6 +37,43 @@ def test_get_css_rejects_non_css_and_missing():
     assert get_css(manager, "notes.txt") is None
     assert get_css(manager, "missing.css") is None
     assert get_css(manager, "../escape.css") is None
+
+
+def test_compile_error_is_served_as_an_overlay_not_a_404(caplog):
+    manager = CobrastyleManager(InMemoryResolver({"broken.css": "..a { color: red; }"}))
+
+    with caplog.at_level(logging.ERROR, logger="cobrastyle.serve"):
+        result = serve(manager, "broken.css")
+
+    assert result is not None
+    assert result.status == 200
+    body = result.body.decode()
+    assert "failed to compile broken.css" in body
+    assert "html::before" in body
+    assert "failed to compile 'broken.css'" in caplog.text
+
+    head = serve(manager, "broken.css", method="HEAD")
+    assert head is not None
+    assert head.status == 200
+    assert head.body == b""
+
+
+def test_missing_import_dependency_surfaces_as_compile_error():
+    manager = CobrastyleManager(InMemoryResolver({"entry.css": '@import "missing.css";'}))
+
+    result = serve(manager, "entry.css")
+
+    assert result is not None
+    assert result.status == 200
+    assert "failed to compile entry.css" in result.body.decode()
+
+
+def test_error_css_escapes_the_message():
+    css = error_css("x.css", 'a "quote" and a */ comment close')
+
+    # The message's */ must not terminate the comment early; quotes must not end the content string.
+    assert "*\\/ comment close" in css.split("*/", 1)[0]
+    assert '\\"quote\\"' in css
 
 
 def test_etag_changes_with_content(tmp_path):

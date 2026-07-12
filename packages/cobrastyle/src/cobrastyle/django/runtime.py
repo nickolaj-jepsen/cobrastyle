@@ -6,8 +6,9 @@ from typing import TYPE_CHECKING
 from django.conf import settings
 from django.template import Origin, TemplateSyntaxError
 
+from cobrastyle.errors import StylesheetNotFoundError
 from cobrastyle.manifest import Manifest, ModuleEntry
-from cobrastyle.source import StylesheetNotFoundError, StyleSource
+from cobrastyle.source import StyleSource
 
 if TYPE_CHECKING:
     from collections.abc import Callable

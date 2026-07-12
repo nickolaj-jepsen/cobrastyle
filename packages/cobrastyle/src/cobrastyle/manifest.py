@@ -5,11 +5,11 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from cobrastyle.errors import ManifestError
+
 MANIFEST_VERSION = 1
 
-
-class ManifestError(Exception):
-    """The manifest is missing, malformed, or from an incompatible cobrastyle."""
+__all__ = ["MANIFEST_VERSION", "AssetEntry", "Manifest", "ManifestError", "ModuleEntry"]
 
 
 @dataclass(frozen=True)

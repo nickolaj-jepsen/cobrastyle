@@ -300,8 +300,14 @@ def test_missing_resolver():
 
 def test_unknown_stylesheet():
     jinja = make_environment({})
-    with pytest.raises(KeyError):
+    with pytest.raises(TemplateSyntaxError, match=r"'missing\.css' not found"):
         jinja.from_string('{% cobrastyle styles = "missing.css" %}')
+
+
+def test_invalid_stylesheet_path():
+    jinja = make_environment({})
+    with pytest.raises(TemplateSyntaxError, match="relative to the resolver root"):
+        jinja.from_string('{% cobrastyle styles = "../escape.css" %}')
 
 
 def test_cx_global():

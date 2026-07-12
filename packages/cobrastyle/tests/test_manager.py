@@ -5,7 +5,15 @@ from types import SimpleNamespace
 
 import pytest
 
-from cobrastyle import CobrastyleManager, FileSystemResolver, InMemoryResolver, ResolvedFile
+from cobrastyle import (
+    CircularComposesError,
+    CobrastyleManager,
+    ComposesExportError,
+    FileSystemResolver,
+    InMemoryResolver,
+    ResolvedFile,
+    StylesheetNotFoundError,
+)
 from cobrastyle_lightningcss import CssModuleReference
 
 
@@ -303,7 +311,7 @@ def test_dependency_reference_to_missing_export_raises(monkeypatch):
         },
     )
 
-    with pytest.raises(KeyError, match="does not export a class named 'nope'"):
+    with pytest.raises(ComposesExportError, match="does not export a class named 'nope'"):
         manager.import_module("button.css")
 
 
@@ -316,8 +324,30 @@ def test_circular_composes_chain_raises(monkeypatch):
         },
     )
 
-    with pytest.raises(ValueError, match="Circular composes chain"):
+    with pytest.raises(CircularComposesError, match="Circular composes chain"):
         manager.import_module("a.css")
+
+
+def test_circular_composes_message_shows_the_actual_chain(monkeypatch):
+    manager = use_fake_bundle(
+        monkeypatch,
+        {
+            "page.css": (".page {}", {"page": [composes_from("b", "./b.css")]}),
+            "b.css": (".b {}", {"b": [composes_from("a", "./a.css")]}),
+            "a.css": (".a {}", {"a": [composes_from("b", "./b.css")]}),
+        },
+    )
+
+    with pytest.raises(CircularComposesError, match=r"b\.css -> a\.css -> b\.css$"):
+        manager.import_module("page.css")
+
+
+def test_missing_module_raises_stylesheet_not_found():
+    manager = CobrastyleManager(InMemoryResolver({}))
+
+    with pytest.raises(StylesheetNotFoundError, match=r"'missing\.css' not found") as excinfo:
+        manager.import_module("missing.css")
+    assert excinfo.value.path == "missing.css"
 
 
 def test_concurrent_imports_compile_once():

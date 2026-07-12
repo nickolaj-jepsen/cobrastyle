@@ -1,6 +1,8 @@
 from pathlib import Path
 from typing import NamedTuple, Protocol, runtime_checkable
 
+from cobrastyle.errors import StylesheetPathError
+
 
 class ResolvedFile(NamedTuple):
     url: str
@@ -59,7 +61,7 @@ class FileSystemResolver:
     def _path(self, filename: str) -> Path:
         path = (self.root / filename).resolve()
         if not path.is_relative_to(self.root):
-            raise ValueError(f"Stylesheet path escapes the resolver root: {filename!r}")
+            raise StylesheetPathError(f"Stylesheet path escapes the resolver root: {filename!r}")
         return path
 
     def resolve(self, filename: str) -> ResolvedFile:

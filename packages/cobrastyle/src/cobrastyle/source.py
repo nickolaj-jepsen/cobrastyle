@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from cobrastyle.errors import StylesheetNotFoundError
 from cobrastyle.manifest import Manifest, ModuleEntry
 
 if TYPE_CHECKING:
@@ -9,9 +10,7 @@ if TYPE_CHECKING:
 
     from cobrastyle.manager import CobrastyleManager
 
-
-class StylesheetNotFoundError(LookupError):
-    """A module path has no entry in the manifest; the message names the rebuild command."""
+__all__ = ["StyleSource", "StylesheetNotFoundError"]
 
 
 class StyleSource:
@@ -39,15 +38,24 @@ class StyleSource:
         self.rebuild_hint = rebuild_hint
         self.url_map = url_map
 
+    def _entry(self, path: str) -> ModuleEntry:
+        assert self.manifest is not None
+        entry = self.manifest.modules.get(path)
+        if entry is None:
+            raise StylesheetNotFoundError(
+                f"Stylesheet {path!r} is not in the manifest — did you run `{self.rebuild_hint}` after adding it?",
+                path=path,
+            )
+        return entry
+
     def resolve(self, path: str) -> tuple[dict[str, str], tuple[str, ...]]:
-        """Return (class map, module paths the page must link) for ``path``."""
+        """Return (class map, module paths the page must link) for ``path``.
+
+        Raises StylesheetNotFoundError when ``path`` resolves to nothing in
+        the current mode.
+        """
         if self.manifest is not None:
-            entry = self.manifest.modules.get(path)
-            if entry is None:
-                raise StylesheetNotFoundError(
-                    f"Stylesheet {path!r} is not in the manifest — did you run `{self.rebuild_hint}` after adding it?"
-                )
-            return entry.classes, (path,)
+            return self._entry(path).classes, (path,)
         assert self.manager is not None
         stylesheet = self.manager.import_module(path)
         # Composed-from modules first, so their CSS is linked before this module's
@@ -60,11 +68,7 @@ class StyleSource:
         module's entry instead of returning the one baked in at build time.
         """
         if self.manifest is not None:
-            entry = self.manifest.modules.get(path)
-            if entry is None:
-                raise StylesheetNotFoundError(
-                    f"Stylesheet {path!r} is not in the manifest — rebuild with `{self.rebuild_hint}`."
-                )
+            entry = self._entry(path)
             return self.url_map(entry) if self.url_map is not None else entry.url
         assert self.manager is not None
         # URLs are path-derived and render-invariant — skip import_module's freshness stat

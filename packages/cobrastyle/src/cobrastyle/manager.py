@@ -3,19 +3,13 @@ import re
 import threading
 from typing import NamedTuple
 
+from cobrastyle.errors import CircularComposesError, ComposesExportError, StylesheetNotFoundError
 from cobrastyle.paths import normalize_path
 from cobrastyle.resolvers import FileResolver
 from cobrastyle_lightningcss import CssModuleExport, CssModuleReference, Dependency, bundle
 
 # `button_primary_2x4fBq` reads back to its source in devtools; builds swap in the compact lightningcss default
 DEV_MODULE_PATTERN = "[name]_[local]_[hash]"
-
-
-class _VisitingState(threading.local):
-    """The compose-chain paths currently being compiled, per thread (cycle detection)."""
-
-    def __init__(self) -> None:
-        self.paths: set[str] = set()
 
 
 class Stylesheet(NamedTuple):
@@ -95,24 +89,30 @@ class CobrastyleManager:
         self.source_map = source_map
         self._cache: dict[str, Stylesheet] = {}
         self._lock = threading.RLock()
-        self._visiting = _VisitingState()
+        # Compose-chain paths currently compiling, in call order (cycle detection).
+        # A plain list suffices: compiles are fully serialized by the RLock.
+        self._visiting: list[str] = []
 
     def import_module(self, path: str) -> Stylesheet:
-        """Resolve, compile and cache the CSS module at ``path``."""
+        """Resolve, compile and cache the CSS module at ``path``.
+
+        Raises StylesheetNotFoundError when the resolver has no such module,
+        CircularComposesError / ComposesExportError for broken ``composes``
+        chains, and the compiler's TransformError for CSS that won't compile.
+        """
         path = normalize_path(path)
         with self._lock:
             if (cached := self._cache.get(path)) and self._is_fresh(cached):
                 return cached
 
-            visiting = self._visiting.paths
-            if path in visiting:
-                chain = " -> ".join([*sorted(visiting), path])
-                raise ValueError(f"Circular composes chain between CSS modules: {chain}")
-            visiting.add(path)
+            if path in self._visiting:
+                chain = " -> ".join([*self._visiting[self._visiting.index(path) :], path])
+                raise CircularComposesError(f"Circular composes chain between CSS modules: {chain}")
+            self._visiting.append(path)
             try:
                 stylesheet = self._compile(path)
             finally:
-                visiting.discard(path)
+                self._visiting.pop()
             self._cache[path] = stylesheet
             return stylesheet
 
@@ -131,7 +131,10 @@ class CobrastyleManager:
         return self.module_pattern.replace("[name]", stem)
 
     def _compile(self, path: str) -> Stylesheet:
-        resolved = self.resolver.resolve(path)
+        try:
+            resolved = self.resolver.resolve(path)
+        except (KeyError, OSError) as exc:
+            raise StylesheetNotFoundError(f"Stylesheet {path!r} not found by the resolver", path=path) from exc
         result = bundle(
             filename=path,
             provider=_BundleProvider(self.resolver, path, resolved.content),
@@ -187,7 +190,7 @@ class CobrastyleManager:
                     dependency_path = normalize_path(posixpath.join(posixpath.dirname(path), specifier))
                     dependency = self.import_module(dependency_path)
                     if name not in dependency.classes:
-                        raise KeyError(
+                        raise ComposesExportError(
                             f"{dependency_path!r} does not export a class named {name!r} (composes in {path!r})"
                         )
                     names.append(dependency.classes[name])

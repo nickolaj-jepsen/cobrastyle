@@ -1,18 +1,34 @@
 from typing import TYPE_CHECKING
 
 from cobrastyle.cx import cx
+from cobrastyle.errors import (
+    BuildError,
+    CircularComposesError,
+    CobrastyleError,
+    ComposesExportError,
+    ManifestError,
+    StylesheetNotFoundError,
+    StylesheetPathError,
+)
 from cobrastyle.resolvers import FileResolver, FileSystemResolver, InMemoryResolver, ResolvedFile
 
 if TYPE_CHECKING:
     from cobrastyle.manager import CobrastyleManager, Stylesheet
 
 __all__ = [
+    "BuildError",
+    "CircularComposesError",
+    "CobrastyleError",
     "CobrastyleManager",
+    "ComposesExportError",
     "FileResolver",
     "FileSystemResolver",
     "InMemoryResolver",
+    "ManifestError",
     "ResolvedFile",
     "Stylesheet",
+    "StylesheetNotFoundError",
+    "StylesheetPathError",
     "cx",
 ]
 

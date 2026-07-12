@@ -13,12 +13,13 @@ from jinja2.runtime import Context
 from markupsafe import Markup
 
 from cobrastyle.cx import cx
+from cobrastyle.errors import StylesheetNotFoundError, StylesheetPathError
 from cobrastyle.fragments import fragment_links_html
 from cobrastyle.manifest import Manifest, ModuleEntry
 from cobrastyle.paths import normalize_path
 from cobrastyle.resolvers import FileResolver, HasUrlPrefix
 from cobrastyle.serve import hot_reload_script_html
-from cobrastyle.source import StylesheetNotFoundError, StyleSource
+from cobrastyle.source import StyleSource
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -275,7 +276,10 @@ class CobrastyleExtension(Extension):
                 parser.filename,
             )
 
-        path = normalize_path(path_expression.value)
+        try:
+            path = normalize_path(path_expression.value)
+        except StylesheetPathError as exc:
+            raise TemplateSyntaxError(str(exc), lineno, parser.name, parser.filename) from exc
         classes, page_paths = self._resolve_module(path, lineno, parser)
         if self._binding_recorder is not None:
             self._binding_recorder(target, path, classes)

@@ -5,16 +5,21 @@ import base64
 import hashlib
 import html
 import json
+import logging
 import mimetypes
 import time
 from collections.abc import Awaitable, Callable, Iterable, Iterator, MutableMapping
 from http import HTTPStatus
 from typing import TYPE_CHECKING, Any, NamedTuple
 
+from cobrastyle.errors import CobrastyleError, StylesheetNotFoundError, StylesheetPathError
+
 if TYPE_CHECKING:
     from wsgiref.types import StartResponse, WSGIApplication, WSGIEnvironment
 
     from cobrastyle.manager import CobrastyleManager, Stylesheet
+
+logger = logging.getLogger(__name__)
 
 # Minimal structural ASGI types; the asgiref ones are equivalent but not a dependency.
 Scope = MutableMapping[str, Any]
@@ -40,7 +45,16 @@ SSE_HEADERS = [
     ("X-Accel-Buffering", "no"),
 ]
 
-_RESOLVE_ERRORS = (KeyError, ValueError, FileNotFoundError, IsADirectoryError, NotADirectoryError, PermissionError)
+# Raw-asset misses that mean 404. Deliberately no plain ValueError: the compiler's
+# TransformError subclasses it, and compile failures must surface, not vanish.
+_RESOLVE_ERRORS = (
+    KeyError,
+    FileNotFoundError,
+    IsADirectoryError,
+    NotADirectoryError,
+    PermissionError,
+    StylesheetPathError,
+)
 
 
 class Resource(NamedTuple):
@@ -161,11 +175,27 @@ def serve(
     """Resolve ``path`` into a complete conditional-GET response; None means not found.
 
     Owns the caching contract for every framework adapter: weak-ETag
-    comparison, the 200/304 header sets, and empty bodies for HEAD.
+    comparison, the 200/304 header sets, and empty bodies for HEAD. A module
+    that fails to *compile* is not a 404: the failure is logged and served as
+    a stylesheet that overlays the error on the page (see :func:`error_css`).
     """
     if method not in ("GET", "HEAD"):
         return None
-    resource = _CLIENT_RESOURCE if path == CLIENT_SCRIPT_PATH else get_resource(manager, path)
+    try:
+        resource = _CLIENT_RESOURCE if path == CLIENT_SCRIPT_PATH else get_resource(manager, path)
+    except Exception as exc:
+        if not _is_compile_error(exc):
+            raise
+        logger.error("cobrastyle failed to compile %r: %s", path, exc)
+        body = error_css(path, exc).encode()
+        headers = [
+            ("Content-Type", CONTENT_TYPE),
+            ("Content-Length", str(len(body))),
+            ("Cache-Control", CACHE_CONTROL),
+        ]
+        # 200 without an ETag: browsers only apply 2xx stylesheets, and the next
+        # request must revalidate so the fix (or a new error) always shows.
+        return Served(200, headers, body if method == "GET" else b"")
     if resource is None:
         return None
     if _etag_matches(if_none_match, resource.etag):
@@ -183,14 +213,19 @@ def get_css(manager: CobrastyleManager, path: str) -> tuple[str, str] | None:
     """Compile (or revalidate) the module at resolver-relative ``path``.
 
     Returns ``(code, weak_etag)``, or None when the path is not a resolvable
-    ``.css`` file.
+    ``.css`` file. Compile failures (bad CSS, broken composes chains, missing
+    dependencies) propagate — they are errors to surface, not 404s.
     """
     if not path.endswith(".css"):
         return None
     try:
         stylesheet = manager.import_module(path)
-    except _RESOLVE_ERRORS:
+    except StylesheetPathError:
         return None
+    except StylesheetNotFoundError as exc:
+        if exc.path == path:
+            return None
+        raise  # a missing composes dependency is a compile failure, not a 404
     code = stylesheet.code
     if stylesheet.map is not None:
         encoded = base64.b64encode(stylesheet.map.encode()).decode()
@@ -218,6 +253,40 @@ def get_resource(manager: CobrastyleManager, path: str) -> Resource | None:
     content_type = mimetypes.guess_type(path)[0] or "application/octet-stream"
     digest = hashlib.sha256(data).hexdigest()[:16]
     return Resource(data, content_type, f'W/"{digest}"')
+
+
+def _is_compile_error(exc: Exception) -> bool:
+    # Local import: serve.py is on the prod import path (via the adapters), the compiler isn't.
+    from cobrastyle_lightningcss import TransformError
+
+    return isinstance(exc, (TransformError, CobrastyleError))
+
+
+def error_css(path: str, error: object) -> str:
+    """A dev-only stylesheet that overlays a compile failure on the page.
+
+    Served in place of a module that failed to compile, so the developer sees
+    the error where they are looking — the page — instead of a silent 404 in
+    the network tab.
+    """
+    message = f"cobrastyle: failed to compile {path}\n\n{error}"
+    content = message.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\A ")
+    return (
+        f"/* {message.replace('*/', '*\\/')} */\n"
+        "html::before {\n"
+        f'  content: "{content}";\n'
+        "  position: fixed;\n"
+        "  top: 0;\n"
+        "  left: 0;\n"
+        "  right: 0;\n"
+        "  z-index: 2147483647;\n"
+        "  padding: 12px;\n"
+        "  background: #b00020;\n"
+        "  color: #fff;\n"
+        "  font: 14px/1.4 monospace;\n"
+        "  white-space: pre-wrap;\n"
+        "}\n"
+    )
 
 
 def _etag_matches(if_none_match: str | None, etag: str) -> bool:
